@@ -1,31 +1,39 @@
 --!strict
-local Types = {}
-
 export type Destructor = () -> ()
-
-export type SignalLike<T> = {
-	Get : (any) -> T
-}
 
 export type Dependency = {
 	Rerun : (self : Dependency) -> (),
-	_Cleanups : { Destructor },
-	_Dependencies : { [any] : boolean },
+	Cleanups : { Destructor },
+	Dependencies : { [Dependency] : boolean },
 }
 
-export type Signal<T> = SignalLike<T> & {
-	Set : (self : Signal<T>, NewValue : T) -> (),
+export type SignalLike<ValueType> = {
+	Get : (self : SignalLike<ValueType>) -> ValueType
 }
 
-export type ReadOnly<T> = SignalLike<T>
+export type Signal<ValueType> = SignalLike<ValueType> & {
+	Set : (self : Signal<ValueType>, NewValue : ValueType) -> (),
+}
 
-export type Reactive<T> = Signal<T> | ReadOnly<T>
+export type ReadOnly<ValueType> = SignalLike<ValueType>
 
-export type Binding<T> = T | Reactive<T>
+export type Reactive<ValueType> = Signal<ValueType> | ReadOnly<ValueType>
 
-export type Property<T> = Binding<T>?
+export type Binding<ValueType> = ValueType | Reactive<ValueType>
+
+export type Property<ValueType> = Binding<ValueType>?
+
+export type ForObject<KeyType, ValueType> = {
+	Type : "For",
+	Source : ReadOnly<{ [KeyType] : ValueType }>,
+	Processor : (KeyType, ValueType) -> Instance,
+}
+
+export type Child = Instance | ForObject<any, any>
 
 export type BaseProperties = {
+	[number] : Child,
+
 	Name : Property<string>?,
 	Parent : Instance?,
 	Visible : Property<boolean>?,
@@ -41,6 +49,7 @@ export type BaseProperties = {
 	Rotation : Property<number>?,
 	ClipsDescendants : Property<boolean>?,
 	AutomaticSize : Property<Enum.AutomaticSize>?,
+	Reference : Signal<Instance?>?,
 }
 
 export type TextProperties = BaseProperties & {
@@ -87,6 +96,8 @@ export type ScrollingProperties = BaseProperties & {
 }
 
 export type LayoutProperties = {
+	[number] : Child,
+
 	Padding : Property<UDim>?,
 	FillDirection : Property<Enum.FillDirection>?,
 	SortOrder : Property<Enum.SortOrder>?,
@@ -124,6 +135,6 @@ export type StrokeProperties = {
 	ZIndex : Property<number>?,
 }
 
-export type WidgetProperties = { [any]: any }
+export type WidgetProperties = { [any] : any }
 
-return Types
+return nil

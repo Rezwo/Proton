@@ -9,37 +9,84 @@ local function NewImplementation(ClassName : string)
 		local NewInstance : Instance = Instance.new(ClassName)
 		local Cleanups : { () -> () } = {}
 
+		local ParentInstance : Instance? = nil
+		local ReferenceSignal : Types.Signal<Instance?>? = nil
+
 		for Key, Value in Properties do
 			if type(Key) == "number" then
 				if typeof(Value) == "Instance" then
 					Value.Parent = NewInstance
+					continue
+				end
+
+				if type(Value) == "table" and (Value :: any).Type == "For" then
+					local ForObject = Value :: Types.ForObject<any, any>
+					local InstanceCache : { [any] : Instance } = {}
+
+					local ListEffect = State.CreateEffect(function()
+						local Data = ForObject.Source:Get() or {}
+						local SeenKeys : { [any] : boolean } = {}
+
+						for ItemKey, ItemValue in Data do
+							SeenKeys[ItemKey] = true
+
+							if not InstanceCache[ItemKey] then
+								local ChildInstance : Instance = ForObject.Processor(ItemKey, ItemValue)
+								if ChildInstance then
+									ChildInstance.Parent = NewInstance
+									InstanceCache[ItemKey] = ChildInstance
+								end
+							end
+						end
+
+						for CacheKey, ChildInstance in InstanceCache do
+							if not SeenKeys[CacheKey] then
+								ChildInstance:Destroy()
+								InstanceCache[CacheKey] = nil
+							end
+						end
+
+						return nil
+					end)
+
+					table.insert(Cleanups, ListEffect)
+					continue
+				end
+				continue
+			end
+			
+			if Key == "Parent" then
+				ParentInstance = Value
+				continue
+			end
+
+			if Key == "Reference" then
+				ReferenceSignal = Value
+				continue
+			end
+
+			if typeof(Value) == "function" then
+				local EventSignal : any = (NewInstance :: any)[Key]
+				if typeof(EventSignal) == "RBXScriptSignal" then
+					local Connection = EventSignal:Connect(Value)
+					table.insert(Cleanups, function() Connection:Disconnect() end)
 				end
 				continue
 			end
 
-			if type(Key) == "string" then
-				if typeof(Value) == "function" then
-					local EventSignal : any = (NewInstance :: any)[Key]
-					if typeof(EventSignal) == "RBXScriptSignal" then
-						EventSignal:Connect(Value)
-					end
-					continue
-				end
+			if type(Value) == "table" and (Value :: any).Get then
+				local ReactiveValue = Value :: Types.ReadOnly<any>
 
-				if type(Value) == "table" and (Value :: any).Get then
-					local ReactiveValue = Value :: Types.ReadOnly<any>
+				local DisposeEffect = State.CreateEffect(function()
+					(NewInstance :: any)[Key] = ReactiveValue:Get()
+					return nil
+				end)
 
-					local DisposeEffect = State.CreateEffect(function()
-						(NewInstance :: any)[Key] = ReactiveValue:Get()
-						return nil
-					end)
-
-					table.insert(Cleanups, DisposeEffect)
-					continue
-				end
-
-				(NewInstance :: any)[Key] = Value
+				table.insert(Cleanups, DisposeEffect)
+				continue
 			end
+
+			(NewInstance :: any)[Key] = Value
 		end
 
 		if #Cleanups > 0 then
@@ -48,6 +95,14 @@ local function NewImplementation(ClassName : string)
 					Cleanup()
 				end
 			end)
+		end
+
+		if ReferenceSignal then
+			ReferenceSignal:Set(NewInstance)
+		end
+
+		if ParentInstance then
+			NewInstance.Parent = ParentInstance
 		end
 
 		return NewInstance
@@ -80,7 +135,7 @@ type LayoutConstructors =
 & (("UIPadding") -> (Types.PaddingProperties) -> UIPadding)
 & (("UIScale") -> (Types.ScaleProperties) -> UIScale)
 
-type FallbackConstructor = <T>(ClassName : string) -> (Types.WidgetProperties) -> T
+type FallbackConstructor = <InstanceType>(ClassName : string) -> (Types.WidgetProperties) -> InstanceType
 
 type BuilderConstructor = 
 	PrimitiveConstructors 

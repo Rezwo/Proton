@@ -4,31 +4,42 @@ local Engine = require(script.Parent.Engine)
 
 local State = {}
 
-function State.CreateSignal<T>(InitialValue : T) : Types.Signal<T>
+local SignalMetatable = {}
+SignalMetatable.__index = SignalMetatable
+
+function SignalMetatable:Get() : any
+	Engine.Track(self)
+	return self.Value
+end
+
+function SignalMetatable:Set(NewValue : any)
+	if self.Value ~= NewValue then
+		self.Value = NewValue
+		Engine.Trigger(self)
+	end
+end
+
+local ReadOnlyMetatable = {}
+ReadOnlyMetatable.__index = ReadOnlyMetatable
+
+function ReadOnlyMetatable:Get() : any
+	Engine.Track(self)
+	return self.Value
+end
+
+function State.CreateSignal<ValueType>(InitialValue : ValueType) : Types.Signal<ValueType>
 	local Internal = {
-		_Value = InitialValue,
-		_Dependents = {} :: { [Types.Dependency] : boolean },
+		Value = InitialValue,
+		Dependents = {} :: { [Types.Dependency] : boolean },
 	}
 
-	return {
-		Get = function(self : Types.ReadOnly<T>) : T
-			Engine.Track(Internal)
-			return Internal._Value
-		end,
-
-		Set = function(self : Types.Signal<T>, NewValue : T)
-			if Internal._Value ~= NewValue then
-				Internal._Value = NewValue
-				Engine.Trigger(Internal)
-			end
-		end,
-	}
+	return setmetatable(Internal, SignalMetatable) :: any
 end
 
 function State.CreateEffect(Callback : () -> (Types.Destructor?)) : () -> ()
 	local EffectNode : Types.Dependency = {
-		_Cleanups = {},
-		_Dependencies = {},
+		Cleanups = {},
+		Dependencies = {},
 		Rerun = function(self : Types.Dependency) end,
 	}
 
@@ -38,12 +49,13 @@ function State.CreateEffect(Callback : () -> (Types.Destructor?)) : () -> ()
 
 		local CleanupFunction : Types.Destructor? = Callback()
 		if CleanupFunction then
-			table.insert(self._Cleanups, CleanupFunction)
+			table.insert(self.Cleanups, CleanupFunction)
 		end
 
 		Engine.PopEffect()
 	end
 
+	-- Run immediately
 	EffectNode:Rerun()
 
 	return function()
@@ -51,20 +63,24 @@ function State.CreateEffect(Callback : () -> (Types.Destructor?)) : () -> ()
 	end
 end
 
-function State.CreateDerived<T>(Processor : () -> T) : Types.ReadOnly<T>
-	local InternalSignal = State.CreateSignal(nil :: any)
+function State.CreateDerived<ValueType>(Processor : () -> ValueType) : Types.ReadOnly<ValueType>
+	local InternalSignal = {
+		Value = nil :: any,
+		Dependents = {} :: { [Types.Dependency] : boolean },
+	}
+
+	setmetatable(InternalSignal, ReadOnlyMetatable)
 
 	State.CreateEffect(function()
-		local Result : T = Processor()
-		InternalSignal:Set(Result)
+		local Result : ValueType = Processor()
+		if InternalSignal.Value ~= Result then
+			InternalSignal.Value = Result
+			Engine.Trigger(InternalSignal)
+		end
 		return nil
 	end)
 
-	return {
-		Get = function(self : Types.ReadOnly<T>) : T
-			return InternalSignal:Get()
-		end
-	}
+	return InternalSignal :: any
 end
 
 return State
