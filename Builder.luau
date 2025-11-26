@@ -75,10 +75,10 @@ type ImageConstructors =
 type LayoutConstructors = 
 	(("UIListLayout") -> (Types.LayoutProperties) -> UIListLayout)
 & (("UIGridLayout") -> (Types.LayoutProperties) -> UIGridLayout)
-& (("UIStroke") -> (Types.BaseProperties) -> UIStroke)
-& (("UICorner") -> (Types.WidgetProperties) -> UICorner)
-& (("UIPadding") -> (Types.WidgetProperties) -> UIPadding)
-& (("UIScale") -> (Types.WidgetProperties) -> UIScale)
+& (("UIStroke") -> (Types.StrokeProperties) -> UIStroke)
+& (("UICorner") -> (Types.CornerProperties) -> UICorner)
+& (("UIPadding") -> (Types.PaddingProperties) -> UIPadding)
+& (("UIScale") -> (Types.ScaleProperties) -> UIScale)
 
 type FallbackConstructor = <T>(ClassName : string) -> (Types.WidgetProperties) -> T
 

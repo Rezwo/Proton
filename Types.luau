@@ -55,6 +55,9 @@ export type TextProperties = BaseProperties & {
 	Font : Property<Enum.Font>,
 	RichText : Property<boolean>,
 	PlaceholderText : Property<string>,
+	FontFace : Property<Font>,
+	LineHeight : Property<number>,
+	MaxVisibleGraphemes : Property<number>,
 }
 
 export type ImageProperties = BaseProperties & {
@@ -64,6 +67,7 @@ export type ImageProperties = BaseProperties & {
 	ScaleType : Property<Enum.ScaleType>,
 	SliceCenter : Property<Rect>,
 	TileSize : Property<UDim2>,
+	ResampleMode : Property<Enum.ResamplerMode>,
 }
 
 export type ScrollingProperties = BaseProperties & {
@@ -72,6 +76,8 @@ export type ScrollingProperties = BaseProperties & {
 	ScrollBarImageColor3 : Property<Color3>,
 	ScrollBarThickness : Property<number>,
 	ScrollingDirection : Property<Enum.ScrollingDirection>,
+	AutomaticCanvasSize : Property<Enum.AutomaticSize>,
+	ElasticBehavior : Property<Enum.ElasticBehavior>,
 }
 
 export type LayoutProperties = {
@@ -82,6 +88,39 @@ export type LayoutProperties = {
 	HorizontalAlignment : Property<Enum.HorizontalAlignment>,
 	VerticalAlignment : Property<Enum.VerticalAlignment>,
 	ItemLineAlignment : Property<Enum.ItemLineAlignment>,
+	Wraps : Property<boolean>,
+}
+
+export type CornerProperties = {
+	[any] : any,
+	CornerRadius : Property<UDim>,
+}
+
+export type PaddingProperties = {
+	[any] : any,
+	PaddingTop : Property<UDim>,
+	PaddingBottom : Property<UDim>,
+	PaddingLeft : Property<UDim>,
+	PaddingRight : Property<UDim>,
+}
+
+export type ScaleProperties = {
+	[any] : any,
+	Scale : Property<number>,
+}
+
+export type StrokeProperties = {
+	[any] : any,
+	Color : Property<Color3>,
+	Thickness : Property<number>,
+	Transparency : Property<number>,
+	Enabled : Property<boolean>,
+	ApplyStrokeMode : Property<Enum.ApplyStrokeMode>,
+	LineJoinMode : Property<Enum.LineJoinMode>,
+	BorderOffset : Property<UDim>,
+	BorderStrokePosition : Property<Enum.BorderStrokePosition>,
+	StrokeSizingMode : Property<Enum.StrokeSizingMode>,
+	ZIndex : Property<number>,
 }
 
 export type WidgetProperties = {
