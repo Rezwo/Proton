@@ -63,7 +63,7 @@ type PrimitiveConstructors =
 
 type TextConstructors = 
 	(("TextLabel") -> (Types.TextProperties) -> TextLabel)
-& (("TextButton") -> (Types.TextProperties) -> TextButton)
+& (("TextButton") -> (Types.TextButtonProperties) -> TextButton)
 & (("TextBox") -> (Types.TextProperties) -> TextBox)
 
 type ImageConstructors = 
