@@ -4,13 +4,12 @@ local State = require(script.Parent.State)
 
 local Builder = {}
 
-function Builder.New(ClassName : string)
-	return function(Properties : Types.PropertyTable) : Instance
+local function NewImplementation(ClassName : string)
+	return function(Properties : Types.WidgetProperties) : Instance
 		local NewInstance : Instance = Instance.new(ClassName)
-		local Cleanups: { () -> () } = {}
+		local Cleanups : { () -> () } = {}
 
 		for Key, Value in Properties do
-
 			if type(Key) == "number" then
 				if typeof(Value) == "Instance" then
 					Value.Parent = NewInstance
@@ -54,5 +53,42 @@ function Builder.New(ClassName : string)
 		return NewInstance
 	end
 end
+
+type PrimitiveConstructors = 
+	(("Frame") -> (Types.BaseProperties) -> Frame)
+& (("ScreenGui") -> (Types.BaseProperties) -> ScreenGui)
+& (("CanvasGroup") -> (Types.BaseProperties) -> CanvasGroup)
+& (("BillboardGui") -> (Types.BaseProperties) -> BillboardGui)
+& (("SurfaceGui") -> (Types.BaseProperties) -> SurfaceGui)
+
+type TextConstructors = 
+	(("TextLabel") -> (Types.TextProperties) -> TextLabel)
+& (("TextButton") -> (Types.TextProperties) -> TextButton)
+& (("TextBox") -> (Types.TextProperties) -> TextBox)
+
+type ImageConstructors = 
+	(("ImageLabel") -> (Types.ImageProperties) -> ImageLabel)
+& (("ImageButton") -> (Types.ImageProperties) -> ImageButton)
+& (("ScrollingFrame") -> (Types.ScrollingProperties) -> ScrollingFrame)
+& (("VideoFrame") -> (Types.ImageProperties) -> VideoFrame)
+
+type LayoutConstructors = 
+	(("UIListLayout") -> (Types.LayoutProperties) -> UIListLayout)
+& (("UIGridLayout") -> (Types.LayoutProperties) -> UIGridLayout)
+& (("UIStroke") -> (Types.BaseProperties) -> UIStroke)
+& (("UICorner") -> (Types.WidgetProperties) -> UICorner)
+& (("UIPadding") -> (Types.WidgetProperties) -> UIPadding)
+& (("UIScale") -> (Types.WidgetProperties) -> UIScale)
+
+type FallbackConstructor = <T>(ClassName : string) -> (Types.WidgetProperties) -> T
+
+type BuilderConstructor = 
+	PrimitiveConstructors 
+& (TextConstructors 
+	& (ImageConstructors 
+		& (LayoutConstructors 
+			& FallbackConstructor)))
+
+Builder.New = NewImplementation :: BuilderConstructor
 
 return Builder
