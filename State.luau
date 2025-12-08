@@ -27,35 +27,38 @@ function ReadOnlyMetatable:Get() : any
 	return self.Value
 end
 
-function State.CreateSignal<ValueType>(InitialValue : ValueType) : Types.Signal<ValueType>
-	local Internal = {
-		Value = InitialValue,
-		Dependents = {} :: { [Types.Dependency] : boolean },
-	}
-
-	return setmetatable(Internal, SignalMetatable) :: any
+function ReadOnlyMetatable:__newindex(Key : any, Value : any)
+	error("Proton: Cannot write to ReadOnly signal")
 end
 
-function State.CreateEffect(Callback : () -> (Types.Destructor?)) : () -> ()
-	local EffectNode : Types.Dependency = {
-		Cleanups = {},
-		Dependencies = {},
-		Rerun = function(self : Types.Dependency) end,
+function State.CreateSignal<ValueType>(InitialValue : ValueType) : Types.Signal<ValueType>
+	local Internal : any = {
+		Value = InitialValue,
+		Dependents = {}
 	}
+	return setmetatable(Internal, SignalMetatable)
+end
+
+function State.CreateEffect(Callback : () -> Types.Destructor?, Priority : number?, Label : string?) : () -> ()
+	local EffectNode : Types.Dependency = Engine.CreateNode(Priority, Label)
 
 	EffectNode.Rerun = function(self : Types.Dependency)
 		Engine.Cleanup(self)
 		Engine.PushEffect(self)
-
-		local CleanupFunction : Types.Destructor? = Callback()
-		if CleanupFunction then
-			table.insert(self.Cleanups, CleanupFunction)
-		end
-
+		
+		local IsSuccess : boolean, Result : any = xpcall(Callback, debug.traceback)
+		
 		Engine.PopEffect()
+		
+		if IsSuccess then
+			if Result and type(Result) == "function" then
+				table.insert(self.Cleanups, Result)
+			end
+		else
+			error(Result)
+		end
 	end
 
-	-- Run immediately
 	EffectNode:Rerun()
 
 	return function()
@@ -64,11 +67,10 @@ function State.CreateEffect(Callback : () -> (Types.Destructor?)) : () -> ()
 end
 
 function State.CreateDerived<ValueType>(Processor : () -> ValueType) : Types.ReadOnly<ValueType>
-	local InternalSignal = {
-		Value = nil :: any,
-		Dependents = {} :: { [Types.Dependency] : boolean },
+	local InternalSignal : any = {
+		Value = nil,
+		Dependents = {}
 	}
-
 	setmetatable(InternalSignal, ReadOnlyMetatable)
 
 	State.CreateEffect(function()
@@ -80,7 +82,11 @@ function State.CreateDerived<ValueType>(Processor : () -> ValueType) : Types.Rea
 		return nil
 	end)
 
-	return InternalSignal :: any
+	return InternalSignal
+end
+
+function State.Batch(Callback : () -> ())
+	Engine.Batch(Callback)
 end
 
 return State

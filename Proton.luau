@@ -18,5 +18,5 @@ return {
 	CreateSpring = Spring.CreateSpring,
 	For = List.For,
 	CreateCollection = Collection.CreateCollection,
-	New = Builder.New,
+	New = Builder.New
 }

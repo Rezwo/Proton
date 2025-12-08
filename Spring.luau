@@ -4,7 +4,6 @@ local Types = require(script.Parent.Types)
 local State = require(script.Parent.State)
 
 local Spring = {}
-local MathAbs = math.abs
 
 type SpringData = {
 	TargetSignal : Types.SignalLike<number>,
@@ -12,7 +11,8 @@ type SpringData = {
 	CurrentValue : number,
 	Velocity : number,
 	Speed : number,
-	Damping : number
+	Damping : number,
+	IsPaused : boolean
 }
 
 local SpringObjectMetatable = {}
@@ -22,68 +22,106 @@ function SpringObjectMetatable:Get() : number
 	return self._InternalSignal:Get()
 end
 
+function SpringObjectMetatable:SetPosition(Value : number)
+	local Data : SpringData? = self._Data
+	if Data then
+		Data.CurrentValue = Value
+		Data.Velocity = 0
+		Data.InternalSignal:Set(Value)
+	end
+end
+
+function SpringObjectMetatable:SetVelocity(Velocity : number)
+	local Data : SpringData? = self._Data
+	if Data then
+		Data.Velocity = Velocity
+	end
+end
+
+function SpringObjectMetatable:Impulse(Force : number)
+	local Data : SpringData? = self._Data
+	if Data then
+		Data.Velocity += Force
+	end
+end
+
+function SpringObjectMetatable:Pause()
+	local Data : SpringData? = self._Data
+	if Data then
+		Data.IsPaused = true
+	end
+end
+
+function SpringObjectMetatable:Resume()
+	local Data : SpringData? = self._Data
+	if Data then
+		Data.IsPaused = false
+	end
+end
+
 local ActiveSprings : { [any] : SpringData } = {}
 local HeartbeatConnection : RBXScriptConnection? = nil
 
 local function UpdateSprings(DeltaTime : number)
-	if not next(ActiveSprings) then
-		if HeartbeatConnection then
-			HeartbeatConnection:Disconnect()
-			HeartbeatConnection = nil
-		end
-		return
-	end
-
-	for SpringObject, Data in ActiveSprings do
-		local Goal : number = Data.TargetSignal:Get()
-
-		if Data.CurrentValue == Goal and Data.Velocity == 0 then
+	local IsActive : boolean = false
+	
+	for _, Data : SpringData in ActiveSprings do
+		if Data.IsPaused then
+			IsActive = true
 			continue
 		end
 
+		IsActive = true
+		local Goal : number = Data.TargetSignal:Get()
+		
 		local Displacement : number = Goal - Data.CurrentValue
 		local Force : number = Displacement * Data.Speed
-
-		local Velocity : number = (Data.Velocity + Force * DeltaTime) * Data.Damping
-		local CurrentValue : number = Data.CurrentValue + Velocity * DeltaTime
-
-		if MathAbs(Goal - CurrentValue) < 0.001 and MathAbs(Velocity) < 0.001 then
-			Velocity = 0
-			CurrentValue = Goal
+		local NewVelocity : number = (Data.Velocity + Force * DeltaTime) * Data.Damping
+		local NewValue : number = Data.CurrentValue + NewVelocity * DeltaTime
+		
+		if math.abs(Goal - NewValue) < 0.005 and math.abs(NewVelocity) < 0.005 then
+			NewValue = Goal
+			NewVelocity = 0
 		end
-
-		Data.Velocity = Velocity
-		Data.CurrentValue = CurrentValue
-		Data.InternalSignal:Set(CurrentValue)
+		
+		Data.Velocity = NewVelocity
+		Data.CurrentValue = NewValue
+		Data.InternalSignal:Set(NewValue)
+	end
+	
+	if not IsActive and HeartbeatConnection then
+		HeartbeatConnection:Disconnect()
+		HeartbeatConnection = nil
 	end
 end
 
-function Spring.CreateSpring(TargetSignal : Types.Reactive<number>, Speed : number?, Damping : number?) : Types.ReadOnly<number>
-	local SafeTarget = TargetSignal :: Types.SignalLike<number>
+function Spring.CreateSpring(TargetSignal : Types.Reactive<number>, Speed : number?, Damping : number?) : any
+	local SafeTarget : Types.SignalLike<number> = TargetSignal
 	local InitialValue : number = SafeTarget:Get()
-	local InternalSignal = State.CreateSignal(InitialValue)
-
-	local SpringObject = setmetatable({
-		_InternalSignal = InternalSignal
-	}, SpringObjectMetatable)
-
+	local InternalSignal : Types.Signal<number> = State.CreateSignal(InitialValue)
+	
 	local SpringData : SpringData = {
 		TargetSignal = SafeTarget,
 		InternalSignal = InternalSignal,
 		CurrentValue = InitialValue,
 		Velocity = 0,
-		Speed = Speed or 10,
-		Damping = Damping or 0.8
+		Speed = math.clamp(Speed or 10, 0.1, 1000),
+		Damping = math.clamp(Damping or 0.8, 0, 0.99),
+		IsPaused = false
 	}
 
-	ActiveSprings[SpringObject] = SpringData
+	local SpringObject : any = setmetatable({
+		_InternalSignal = InternalSignal,
+		_Data = SpringData
+	}, SpringObjectMetatable)
 
+	ActiveSprings[SpringObject] = SpringData
 	if not HeartbeatConnection then
 		HeartbeatConnection = RunService.Heartbeat:Connect(UpdateSprings)
 	end
-
+	
 	State.CreateEffect(function()
-		local _ = SafeTarget:Get()
+		local _ : number = SafeTarget:Get()
 		if not ActiveSprings[SpringObject] then
 			ActiveSprings[SpringObject] = SpringData
 			if not HeartbeatConnection then
@@ -93,7 +131,7 @@ function Spring.CreateSpring(TargetSignal : Types.Reactive<number>, Speed : numb
 		return nil
 	end)
 
-	return SpringObject :: any
+	return SpringObject
 end
 
 return Spring
