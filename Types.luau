@@ -11,7 +11,8 @@ export type Dependency = {
 }
 
 export type SignalLike<ValueType> = {
-	Get : (SignalLike<ValueType>) -> ValueType
+	Get : (SignalLike<ValueType>) -> ValueType,
+	Destroy : ((SignalLike<ValueType>) -> ())?
 }
 
 export type Signal<ValueType> = SignalLike<ValueType> & {

@@ -19,6 +19,11 @@ function SignalMetatable:Set(NewValue : any)
 	end
 end
 
+function SignalMetatable:Destroy()
+	self.Dependents = {}
+	self.Value = nil
+end
+
 local ReadOnlyMetatable = {}
 ReadOnlyMetatable.__index = ReadOnlyMetatable
 
@@ -71,9 +76,8 @@ function State.CreateDerived<ValueType>(Processor : () -> ValueType) : Types.Rea
 		Value = nil,
 		Dependents = {}
 	}
-	setmetatable(InternalSignal, ReadOnlyMetatable)
-
-	State.CreateEffect(function()
+	
+	local Disconnect : () -> () = State.CreateEffect(function()
 		local Result : ValueType = Processor()
 		if InternalSignal.Value ~= Result then
 			InternalSignal.Value = Result
@@ -82,6 +86,13 @@ function State.CreateDerived<ValueType>(Processor : () -> ValueType) : Types.Rea
 		return nil
 	end)
 
+	InternalSignal.Destroy = function()
+		Disconnect()
+		InternalSignal.Dependents = {}
+		InternalSignal.Value = nil
+	end
+
+	setmetatable(InternalSignal, ReadOnlyMetatable)
 	return InternalSignal
 end
 
