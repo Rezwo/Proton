@@ -26,10 +26,11 @@ function CollectionMetatable:Add(Data : { [string] : any }) : string
 		ReactiveItem[Key] = State.CreateSignal(Value)
 	end
 
+	-- FIX: Create new table reference to trigger reactivity
 	local NewMap : { [string] : any } = table.clone(CurrentMap)
 	NewMap[NewId] = ReactiveItem
-
 	self.Signal:Set(NewMap)
+	
 	return NewId
 end
 
@@ -39,9 +40,17 @@ function CollectionMetatable:Remove(Id : string)
 		return
 	end
 
+	-- FIX: Clean up nested signals to prevent memory leak
+	local Item : { [string] : any } = CurrentMap[Id]
+	for _, Signal : any in Item do
+		if Signal.Destroy then
+			Signal:Destroy()
+		end
+	end
+
+	-- Create new table reference to trigger reactivity
 	local NewMap : { [string] : any } = table.clone(CurrentMap)
 	NewMap[Id] = nil
-
 	self.Signal:Set(NewMap)
 end
 
@@ -53,33 +62,53 @@ function CollectionMetatable:Patch(Id : string, Changes : { [string] : any })
 		return
 	end
 
+	-- Update nested signals - they will trigger their own dependents
 	for Key : string, NewValue : any in Changes do
 		if Item[Key] then
 			Item[Key]:Set(NewValue)
 		else
 			Item[Key] = State.CreateSignal(NewValue)
+			-- Trigger collection update since structure changed
+			local NewMap : { [string] : any } = table.clone(CurrentMap)
+			self.Signal:Set(NewMap)
 		end
 	end
 end
 
 function CollectionMetatable:Destroy()
+	local CurrentMap : { [string] : any } = self.Signal:Get()
+	
+	-- Clean up all nested signals
+	for _, Item : any in CurrentMap do
+		for _, Signal : any in Item do
+			if Signal.Destroy then
+				Signal:Destroy()
+			end
+		end
+	end
+	
 	self.Signal:Set({})
 end
 
 function CollectionMetatable:GetPage(PageNumber : number, ItemsPerPage : number) : { any }
 	local CurrentMap : { [string] : any } = self.Signal:Get()
-	local List : { any } = {}
 	
-	for _, Item : any in CurrentMap do
-		table.insert(List, Item)
+	-- FIX: Sort by key for deterministic order
+	local SortedEntries : { {Key: string, Item: any} } = {}
+	for Key : string, Item : any in CurrentMap do
+		table.insert(SortedEntries, {Key = Key, Item = Item})
 	end
 	
+	table.sort(SortedEntries, function(a, b) : boolean
+		return a.Key < b.Key
+	end)
+	
 	local StartIndex : number = ((PageNumber - 1) * ItemsPerPage) + 1
-	local EndIndex : number = StartIndex + ItemsPerPage - 1
+	local EndIndex : number = math.min(StartIndex + ItemsPerPage - 1, #SortedEntries)
 	local Page : { any } = {}
 	
-	for Index : number = StartIndex, math.min(EndIndex, #List) do
-		table.insert(Page, List[Index])
+	for Index : number = StartIndex, EndIndex do
+		table.insert(Page, SortedEntries[Index].Item)
 	end
 	
 	return Page

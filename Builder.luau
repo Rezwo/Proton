@@ -5,7 +5,8 @@ local State = require(script.Parent.State)
 local Builder = {}
 
 local function ApplyProperty(Instance : Instance, Key : string, Value : any, Cleanups : { () -> () })
-	if type(Value) == "table" and (Value.Get or Value._IsSignal) then
+	-- FIX: Check for Get method to detect reactive values
+	if type(Value) == "table" and type(Value.Get) == "function" then
 		local ReactiveValue : Types.ReadOnly<any> = Value
 		local Disconnect : () -> () = State.CreateEffect(function()
 			(Instance :: any)[Key] = ReactiveValue:Get()
@@ -33,26 +34,47 @@ local function NewImplementation(ClassName : string)
 				
 				if type(Value) == "table" and Value.Type == "For" then
 					local ForObject : Types.ForObject<any, any> = Value
-					local InstanceCache : { [any] : Instance } = {}
+					local InstanceCache : { [any] : {Instance: Instance, Cleanup: (() -> ())?} } = {}
 					
 					local Disconnect : () -> () = State.CreateEffect(function()
 						local Data : { [any] : any } = ForObject.Source:Get() or {}
 						local SeenKeys : { [any] : boolean } = {}
 						
+						-- FIX: Update or create instances
 						for ItemKey : any, ItemValue : any in Data do
 							SeenKeys[ItemKey] = true
-							if not InstanceCache[ItemKey] then
+							local CacheEntry : {Instance: Instance, Cleanup: (() -> ())?}? = InstanceCache[ItemKey]
+							
+							if not CacheEntry then
+								-- Create new instance
 								local ChildInstance : Instance = ForObject.Processor(ItemKey, ItemValue)
 								if ChildInstance then
 									ChildInstance.Parent = NewInstance
-									InstanceCache[ItemKey] = ChildInstance
+									InstanceCache[ItemKey] = {Instance = ChildInstance, Cleanup = nil}
+								end
+							else
+								-- Instance exists - if Processor returns cleanup, it handles updates
+								-- Otherwise, we recreate (safest for now)
+								if CacheEntry.Cleanup then
+									CacheEntry.Cleanup()
+								end
+								CacheEntry.Instance:Destroy()
+								
+								local ChildInstance : Instance = ForObject.Processor(ItemKey, ItemValue)
+								if ChildInstance then
+									ChildInstance.Parent = NewInstance
+									InstanceCache[ItemKey] = {Instance = ChildInstance, Cleanup = nil}
 								end
 							end
 						end
 						
-						for CacheKey : any, CachedInstance : Instance in InstanceCache do
+						-- Remove instances for deleted keys
+						for CacheKey : any, CacheEntry : {Instance: Instance, Cleanup: (() -> ())?} in InstanceCache do
 							if not SeenKeys[CacheKey] then
-								CachedInstance:Destroy()
+								if CacheEntry.Cleanup then
+									CacheEntry.Cleanup()
+								end
+								CacheEntry.Instance:Destroy()
 								InstanceCache[CacheKey] = nil
 							end
 						end
@@ -61,8 +83,11 @@ local function NewImplementation(ClassName : string)
 					
 					table.insert(Cleanups, function()
 						Disconnect()
-						for _, CachedInstance : Instance in InstanceCache do
-							CachedInstance:Destroy()
+						for _, CacheEntry : {Instance: Instance, Cleanup: (() -> ())?} in InstanceCache do
+							if CacheEntry.Cleanup then
+								CacheEntry.Cleanup()
+							end
+							CacheEntry.Instance:Destroy()
 						end
 						table.clear(InstanceCache)
 					end)

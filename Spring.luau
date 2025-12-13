@@ -12,7 +12,8 @@ type SpringData = {
 	Velocity : number,
 	Speed : number,
 	Damping : number,
-	IsPaused : boolean
+	IsPaused : boolean,
+	EffectCleanup : (() -> ())?
 }
 
 local SpringObjectMetatable = {}
@@ -59,20 +60,42 @@ function SpringObjectMetatable:Resume()
 	end
 end
 
-local ActiveSprings : { [any] : SpringData } = {}
+function SpringObjectMetatable:Destroy()
+	local Data : SpringData? = self._Data
+	if Data then
+		if Data.EffectCleanup then
+			Data.EffectCleanup()
+		end
+		ActiveSprings[self] = nil
+		self._Data = nil
+	end
+end
+
+-- FIX: Use weak keys to allow garbage collection
+local ActiveSprings : { [any] : SpringData } = setmetatable({}, {__mode = "k"})
 local HeartbeatConnection : RBXScriptConnection? = nil
 
 local function UpdateSprings(DeltaTime : number)
 	local IsActive : boolean = false
 	
-	for _, Data : SpringData in ActiveSprings do
+	for SpringObject : any, Data : SpringData in ActiveSprings do
+		-- FIX: Don't set IsActive for paused springs
 		if Data.IsPaused then
-			IsActive = true
 			continue
 		end
 
 		IsActive = true
-		local Goal : number = Data.TargetSignal:Get()
+		
+		-- Safety: Check if target signal still exists
+		local Success : boolean, Goal : any = pcall(function()
+			return Data.TargetSignal:Get()
+		end)
+		
+		if not Success then
+			-- Target signal was destroyed, stop spring
+			ActiveSprings[SpringObject] = nil
+			continue
+		end
 		
 		local Displacement : number = Goal - Data.CurrentValue
 		local Force : number = Displacement * Data.Speed
@@ -107,7 +130,8 @@ function Spring.CreateSpring(TargetSignal : Types.Reactive<number>, Speed : numb
 		Velocity = 0,
 		Speed = math.clamp(Speed or 10, 0.1, 1000),
 		Damping = math.clamp(Damping or 0.8, 0, 0.99),
-		IsPaused = false
+		IsPaused = false,
+		EffectCleanup = nil
 	}
 
 	local SpringObject : any = setmetatable({
@@ -116,20 +140,24 @@ function Spring.CreateSpring(TargetSignal : Types.Reactive<number>, Speed : numb
 	}, SpringObjectMetatable)
 
 	ActiveSprings[SpringObject] = SpringData
-	if not HeartbeatConnection then
-		HeartbeatConnection = RunService.Heartbeat:Connect(UpdateSprings)
-	end
 	
-	State.CreateEffect(function()
+	-- FIX: Store cleanup function
+	local EffectCleanup : () -> () = State.CreateEffect(function()
 		local _ : number = SafeTarget:Get()
 		if not ActiveSprings[SpringObject] then
 			ActiveSprings[SpringObject] = SpringData
-			if not HeartbeatConnection then
-				HeartbeatConnection = RunService.Heartbeat:Connect(UpdateSprings)
-			end
+		end
+		if not HeartbeatConnection then
+			HeartbeatConnection = RunService.Heartbeat:Connect(UpdateSprings)
 		end
 		return nil
 	end)
+	
+	SpringData.EffectCleanup = EffectCleanup
+	
+	if not HeartbeatConnection then
+		HeartbeatConnection = RunService.Heartbeat:Connect(UpdateSprings)
+	end
 
 	return SpringObject
 end

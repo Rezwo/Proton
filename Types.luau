@@ -7,12 +7,14 @@ export type Dependency = {
 	Dependencies : { [Dependency] : boolean },
 	Dependents : { [Dependency] : boolean },
 	Priority : number,
-	DebugLabel : string?
+	DebugLabel : string?,
+	IsActive : boolean
 }
 
 export type SignalLike<ValueType> = {
 	Get : (SignalLike<ValueType>) -> ValueType,
-	Destroy : ((SignalLike<ValueType>) -> ())?
+	Destroy : ((SignalLike<ValueType>) -> ())?,
+	_IsSignal : boolean?
 }
 
 export type Signal<ValueType> = SignalLike<ValueType> & {

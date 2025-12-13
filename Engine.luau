@@ -11,16 +11,28 @@ local BatchQueue : { [Dependency] : boolean } = {}
 local NodeCount : number = 0
 
 function Engine.Cleanup(Node : Dependency)
+	-- FIX: Create snapshot to prevent modification during iteration
 	local CleanupList : { () -> () } = Node.Cleanups
-	for Index : number = #CleanupList, 1, -1 do
-		CleanupList[Index]()
-	end
+	local CleanupSnapshot : { () -> () } = table.clone(CleanupList)
 	table.clear(CleanupList)
+	
+	for Index : number = #CleanupSnapshot, 1, -1 do
+		local Success : boolean, Error : any = pcall(CleanupSnapshot[Index])
+		if not Success then
+			warn("Proton: Cleanup error:", Error)
+		end
+	end
 
 	for DependencyNode : Dependency, _ : boolean in Node.Dependencies do
 		DependencyNode.Dependents[Node] = nil
 	end
 	table.clear(Node.Dependencies)
+	
+	-- FIX: Track node removal
+	if Node.IsActive then
+		NodeCount = math.max(0, NodeCount - 1)
+		Node.IsActive = false
+	end
 end
 
 function Engine.Track(SignalNode : { Dependents : { [Dependency] : boolean } })
@@ -43,7 +55,7 @@ end
 
 function Engine.PushEffect(Effect : Dependency)
 	if #EffectStack >= MaxStackDepth then
-		error("Proton: Maximum effect depth exceeded")
+		error("Proton: Maximum effect depth exceeded (possible circular dependency)")
 	end
 	table.insert(EffectStack, Effect)
 end
@@ -89,7 +101,8 @@ function Engine.CreateNode(Priority : number?, Label : string?) : Dependency
 		Dependents = {},
 		Rerun = function(self : Dependency) end,
 		Priority = Priority or 0,
-		DebugLabel = Label
+		DebugLabel = Label,
+		IsActive = true
 	}
 end
 

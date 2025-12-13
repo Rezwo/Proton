@@ -13,6 +13,8 @@ function SignalMetatable:Get() : any
 end
 
 function SignalMetatable:Set(NewValue : any)
+	-- Note: Uses reference equality - won't detect table mutations
+	-- Users should replace tables entirely, not mutate them
 	if self.Value ~= NewValue then
 		self.Value = NewValue
 		Engine.Trigger(self)
@@ -20,7 +22,7 @@ function SignalMetatable:Set(NewValue : any)
 end
 
 function SignalMetatable:Destroy()
-	self.Dependents = {}
+	table.clear(self.Dependents)
 	self.Value = nil
 end
 
@@ -39,7 +41,8 @@ end
 function State.CreateSignal<ValueType>(InitialValue : ValueType) : Types.Signal<ValueType>
 	local Internal : any = {
 		Value = InitialValue,
-		Dependents = {}
+		Dependents = {},
+		_IsSignal = true
 	}
 	return setmetatable(Internal, SignalMetatable)
 end
@@ -60,7 +63,7 @@ function State.CreateEffect(Callback : () -> Types.Destructor?, Priority : numbe
 				table.insert(self.Cleanups, Result)
 			end
 		else
-			error(Result)
+			warn("Proton: Effect error:", Result)
 		end
 	end
 
@@ -74,21 +77,27 @@ end
 function State.CreateDerived<ValueType>(Processor : () -> ValueType) : Types.ReadOnly<ValueType>
 	local InternalSignal : any = {
 		Value = nil,
-		Dependents = {}
+		Dependents = {},
+		_IsSignal = true
 	}
 	
 	local Disconnect : () -> () = State.CreateEffect(function()
-		local Result : ValueType = Processor()
-		if InternalSignal.Value ~= Result then
-			InternalSignal.Value = Result
-			Engine.Trigger(InternalSignal)
+		local IsSuccess : boolean, Result : any = pcall(Processor)
+		if IsSuccess then
+			-- Note: Uses reference equality - same limitation as Set()
+			if InternalSignal.Value ~= Result then
+				InternalSignal.Value = Result
+				Engine.Trigger(InternalSignal)
+			end
+		else
+			warn("Proton: Derived processor error:", Result)
 		end
 		return nil
 	end)
 
 	InternalSignal.Destroy = function()
 		Disconnect()
-		InternalSignal.Dependents = {}
+		table.clear(InternalSignal.Dependents)
 		InternalSignal.Value = nil
 	end
 
