@@ -71,6 +71,12 @@ function SpringObjectMetatable:Destroy()
 	end
 end
 
+SpringObjectMetatable.__gc = function(self)
+	-- Only cleanup if not already destroyed
+	if self._Data then
+		self:Destroy()
+	end
+end
 -- FIX: Use weak keys to allow garbage collection
 local ActiveSprings : { [any] : SpringData } = setmetatable({}, {__mode = "k"})
 local HeartbeatConnection : RBXScriptConnection? = nil

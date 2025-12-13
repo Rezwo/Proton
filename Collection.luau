@@ -68,11 +68,13 @@ function CollectionMetatable:Patch(Id : string, Changes : { [string] : any })
 			Item[Key]:Set(NewValue)
 		else
 			Item[Key] = State.CreateSignal(NewValue)
-			-- Trigger collection update since structure changed
-			local NewMap : { [string] : any } = table.clone(CurrentMap)
-			self.Signal:Set(NewMap)
 		end
 	end
+	
+	-- FIX: Always trigger collection update for consistency
+	-- This ensures observers of the main collection signal get updates
+	local NewMap : { [string] : any } = table.clone(CurrentMap)
+	self.Signal:Set(NewMap)
 end
 
 function CollectionMetatable:Destroy()
@@ -91,9 +93,19 @@ function CollectionMetatable:Destroy()
 end
 
 function CollectionMetatable:GetPage(PageNumber : number, ItemsPerPage : number) : { any }
+	-- FIX: Bounds checking to prevent invalid indices
+	if PageNumber < 1 then
+		warn("Proton: PageNumber must be >= 1, defaulting to 1")
+		PageNumber = 1
+	end
+	
+	if ItemsPerPage < 1 then
+		warn("Proton: ItemsPerPage must be >= 1, defaulting to 10")
+		ItemsPerPage = 10
+	end
+	
 	local CurrentMap : { [string] : any } = self.Signal:Get()
 	
-	-- FIX: Sort by key for deterministic order
 	local SortedEntries : { {Key: string, Item: any} } = {}
 	for Key : string, Item : any in CurrentMap do
 		table.insert(SortedEntries, {Key = Key, Item = Item})
@@ -106,6 +118,11 @@ function CollectionMetatable:GetPage(PageNumber : number, ItemsPerPage : number)
 	local StartIndex : number = ((PageNumber - 1) * ItemsPerPage) + 1
 	local EndIndex : number = math.min(StartIndex + ItemsPerPage - 1, #SortedEntries)
 	local Page : { any } = {}
+	
+	-- Handle case where StartIndex exceeds array size
+	if StartIndex > #SortedEntries then
+		return Page  -- Return empty page
+	end
 	
 	for Index : number = StartIndex, EndIndex do
 		table.insert(Page, SortedEntries[Index].Item)
