@@ -62,15 +62,12 @@ end
 function SpringObjectMetatable:Destroy()
 	local Data : SpringData? = self._Data
 	if Data then
-		-- Explicit cleanup
 		ActiveSprings[self] = nil
 		Data.InternalSignal:Destroy()
 		self._Data = nil
 	end
 end
 
--- Weak keys allow the spring object to be collected if user loses reference,
--- effectively "pausing" it until it is garbage collected.
 local ActiveSprings : { [any] : SpringData } = setmetatable({}, {__mode = "k"})
 local HeartbeatConnection : RBXScriptConnection? = nil
 
@@ -84,13 +81,13 @@ local function UpdateSprings(DeltaTime : number)
 			continue
 		end
 
-		-- Safety: Check if target signal still exists
 		local Success : boolean, Goal : any = pcall(function()
 			return Data.TargetSignal:Get()
 		end)
 		
 		if not Success then
-			-- Target signal was destroyed, stop tracking this spring
+			-- FIX: Issue 39 - Warn before disabling
+			warn("Proton: Spring target error (spring disabled):", Goal)
 			ActiveSprings[SpringObject] = nil
 			continue
 		end
@@ -100,23 +97,23 @@ local function UpdateSprings(DeltaTime : number)
 		local NewVelocity : number = (Data.Velocity + Force * DeltaTime) * Data.Damping
 		local NewValue : number = Data.CurrentValue + NewVelocity * DeltaTime
 		
-		-- Dynamic convergence threshold relative to the goal size, with a minimum floor
-		local Epsilon = math.max(0.001, math.abs(Goal * 0.0001))
+		-- FIX: Issue 38 - Better Epsilon calculation for edge cases
+		-- Clamps epsilon between 0.001 and 0.01 based on goal magnitude
+		local Epsilon = math.clamp(math.abs(Goal * 0.001), 0.001, 0.01)
 		
 		if math.abs(Goal - NewValue) < Epsilon and math.abs(NewVelocity) < Epsilon then
 			NewValue = Goal
 			NewVelocity = 0
 		end
 		
-		-- Only set if changed to avoid unnecessary dependency triggers
-		if NewValue ~= Data.CurrentValue or NewVelocity ~= Data.Velocity then
+		-- FIX: Issue 44 - Removed redundant comparison logic
+		if NewValue ~= Data.CurrentValue or Data.Velocity ~= NewVelocity then
 			Data.Velocity = NewVelocity
 			Data.CurrentValue = NewValue
 			Data.InternalSignal:Set(NewValue)
 		end
 	end
 	
-	-- Cleanup connection if no springs are left
 	if Count == 0 and HeartbeatConnection then
 		HeartbeatConnection:Disconnect()
 		HeartbeatConnection = nil

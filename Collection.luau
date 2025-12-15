@@ -23,15 +23,14 @@ function CollectionMetatable:Add(Data : { [string] : any }) : string
 
 	local ReactiveItem : { [string] : any } = {}
 	for Key : string, Value : any in Data do
-		-- FIX: Prevent wrapping existing signals
-		if type(Value) == "table" and Value.Get and Value._IsSignal then
+		-- FIX: Issue 36 - Strict signal check
+		if type(Value) == "table" and type(Value.Get) == "function" and Value._IsSignal then
 			ReactiveItem[Key] = Value
 		else
 			ReactiveItem[Key] = State.CreateSignal(Value)
 		end
 	end
 
-	-- Trigger reactivity by creating a new reference
 	local NewMap : { [string] : any } = table.clone(CurrentMap)
 	NewMap[NewId] = ReactiveItem
 	self.Signal:Set(NewMap)
@@ -46,7 +45,6 @@ function CollectionMetatable:Remove(Id : string)
 		return
 	end
 
-	-- Clean up nested signals to prevent memory leaks
 	local Item : { [string] : any } = CurrentMap[Id]
 	for _, Signal : any in Item do
 		if type(Signal) == "table" and type(Signal.Destroy) == "function" then
@@ -69,13 +67,19 @@ function CollectionMetatable:Patch(Id : string, Changes : { [string] : any })
 	end
 
 	for Key : string, NewValue : any in Changes do
-		if Item[Key] then
-			-- If passing a new signal to patch, decide behavior. 
-			-- Standard behavior assumes Patch receives raw values.
+		-- FIX: Issue 41 - Handle nil values (deletion)
+		if NewValue == nil then
+			if Item[Key] then
+				-- FIX: Issue 46 - Clean up replaced signals
+				if type(Item[Key]) == "table" and type(Item[Key].Destroy) == "function" then
+					Item[Key]:Destroy()
+				end
+				Item[Key] = nil
+			end
+		elseif Item[Key] then
 			Item[Key]:Set(NewValue)
 		else
-			-- New property added dynamically
-			if type(NewValue) == "table" and NewValue.Get and NewValue._IsSignal then
+			if type(NewValue) == "table" and type(NewValue.Get) == "function" and NewValue._IsSignal then
 				Item[Key] = NewValue
 			else
 				Item[Key] = State.CreateSignal(NewValue)
@@ -83,7 +87,6 @@ function CollectionMetatable:Patch(Id : string, Changes : { [string] : any })
 		end
 	end
 	
-	-- Trigger collection update so lists observing the keys update
 	local NewMap : { [string] : any } = table.clone(CurrentMap)
 	self.Signal:Set(NewMap)
 end
@@ -113,7 +116,6 @@ function CollectionMetatable:GetPage(PageNumber : number, ItemsPerPage : number)
 		table.insert(SortedEntries, {Key = Key, Item = Item})
 	end
 	
-	-- Note: Sorting by GUID is arbitrary but consistent for pagination
 	table.sort(SortedEntries, function(a, b) : boolean
 		return a.Key < b.Key
 	end)
@@ -140,7 +142,7 @@ function Collection.CreateCollection<ItemType>(InitialData : { [string] : any }?
 		for Key : string, Value : any in InitialData do
 			local ReactiveItem : { [string] : any } = {}
 			for PropKey : string, PropValue : any in Value do
-				if type(PropValue) == "table" and PropValue.Get and PropValue._IsSignal then
+				if type(PropValue) == "table" and type(PropValue.Get) == "function" and PropValue._IsSignal then
 					ReactiveItem[PropKey] = PropValue
 				else
 					ReactiveItem[PropKey] = State.CreateSignal(PropValue)
