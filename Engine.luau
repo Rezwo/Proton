@@ -76,9 +76,7 @@ function Engine.PopEffect()
 		error("Proton: Attempted to pop from empty effect stack")
 	end
 	local Effect = table.remove(EffectStack)
-	if Effect then
-		EffectStackSet[Effect] = nil
-	end
+	EffectStackSet[Effect :: Dependency] = nil
 end
 
 function Engine.Batch(Callback : () -> ())
