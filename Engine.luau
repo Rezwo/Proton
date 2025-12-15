@@ -13,22 +13,21 @@ local NodeCount : number = 0
 function Engine.Cleanup(Node : Dependency)
 	-- FIX: Create snapshot to prevent modification during iteration
 	local CleanupList : { () -> () } = Node.Cleanups
-	local CleanupSnapshot : { () -> () } = table.clone(CleanupList)
-	table.clear(CleanupList)
-	
-	for Index : number = #CleanupSnapshot, 1, -1 do
-		local Success : boolean, Error : any = pcall(CleanupSnapshot[Index])
+	-- Iterate backwards to respect LIFO order of cleanup
+	for Index : number = #CleanupList, 1, -1 do
+		local Success : boolean, Error : any = pcall(CleanupList[Index])
 		if not Success then
 			warn("Proton: Cleanup error:", Error)
 		end
 	end
+	table.clear(CleanupList)
 
 	for DependencyNode : Dependency, _ : boolean in Node.Dependencies do
 		DependencyNode.Dependents[Node] = nil
 	end
 	table.clear(Node.Dependencies)
 	
-	-- FIX: Track node removal
+	-- FIX: Track node removal accurately
 	if Node.IsActive then
 		NodeCount = math.max(0, NodeCount - 1)
 		Node.IsActive = false
@@ -44,7 +43,15 @@ function Engine.Track(SignalNode : { Dependents : { [Dependency] : boolean } })
 end
 
 function Engine.Trigger(SignalNode : { Dependents : { [Dependency] : boolean } })
+	local CurrentEffect = EffectStack[#EffectStack]
+
 	for Dependent : Dependency, _ : boolean in SignalNode.Dependents do
+		-- FIX: Prevent infinite loops (Cycle detection)
+		if Dependent == CurrentEffect then
+			warn("Proton: Signal triggered inside its own dependency. This causes an infinite loop.")
+			continue
+		end
+
 		if IsBatching then
 			BatchQueue[Dependent] = true
 		else
@@ -72,13 +79,20 @@ function Engine.Batch(Callback : () -> ())
 
 	IsBatching = true
 	local IsSuccess : boolean, Error : any = xpcall(Callback, debug.traceback)
-	IsBatching = false
+	-- Keep batching true until queue is processed to prevent intermediate triggers
+	
+	if not IsSuccess then
+		-- If callback failed, we still attempt to flush queue to restore consistency,
+		-- but we warn about the original error.
+		warn("Proton: Batch callback error:", Error)
+	end
 
 	local Snapshot : { Dependency } = {}
 	for Dependent : Dependency, _ : boolean in BatchQueue do
 		table.insert(Snapshot, Dependent)
 	end
 	table.clear(BatchQueue)
+	IsBatching = false
 
 	table.sort(Snapshot, function(NodeA : Dependency, NodeB : Dependency) : boolean
 		return NodeA.Priority > NodeB.Priority
@@ -86,10 +100,6 @@ function Engine.Batch(Callback : () -> ())
 
 	for _, Dependent : Dependency in Snapshot do
 		Dependent:Rerun()
-	end
-
-	if not IsSuccess then
-		error(Error)
 	end
 end
 

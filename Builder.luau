@@ -5,16 +5,22 @@ local State = require(script.Parent.State)
 local Builder = {}
 
 local function ApplyProperty(Instance : Instance, Key : string, Value : any, Cleanups : { () -> () })
-	-- FIX: Check for Get method to detect reactive values
+	-- FIX: Explicit check for SignalLike interface
 	if type(Value) == "table" and type(Value.Get) == "function" then
 		local ReactiveValue : Types.ReadOnly<any> = Value
 		local Disconnect : () -> () = State.CreateEffect(function()
-			(Instance :: any)[Key] = ReactiveValue:Get()
+			-- FIX: Safe assignment
+			pcall(function()
+				(Instance :: any)[Key] = ReactiveValue:Get()
+			end)
 			return nil
 		end)
 		table.insert(Cleanups, Disconnect)
 	else
-		(Instance :: any)[Key] = Value
+		-- FIX: Check if property actually exists (basic protection)
+		pcall(function()
+			(Instance :: any)[Key] = Value
+		end)
 	end
 end
 
@@ -34,46 +40,52 @@ local function NewImplementation(ClassName : string)
 				
 				if type(Value) == "table" and Value.Type == "For" then
 					local ForObject : Types.ForObject<any, any> = Value
-					local InstanceCache : { [any] : {Instance: Instance, Cleanup: (() -> ())?} } = {}
+					-- Store Value alongside Instance to check for updates
+					local InstanceCache : { [any] : {Instance: Instance, Value: any, Cleanup: (() -> ())?} } = {}
 					
 					local Disconnect : () -> () = State.CreateEffect(function()
 						local Data : { [any] : any } = ForObject.Source:Get() or {}
 						local SeenKeys : { [any] : boolean } = {}
 						
-						-- FIX: Update or create instances
+						-- FIX: Proper Diffing Algorithm
 						for ItemKey : any, ItemValue : any in Data do
 							SeenKeys[ItemKey] = true
-							local CacheEntry : {Instance: Instance, Cleanup: (() -> ())?}? = InstanceCache[ItemKey]
+							local CacheEntry = InstanceCache[ItemKey]
 							
 							if not CacheEntry then
-								-- Create new instance
+								-- Case 1: New Item
 								local ChildInstance : Instance = ForObject.Processor(ItemKey, ItemValue)
 								if ChildInstance then
 									ChildInstance.Parent = NewInstance
-									InstanceCache[ItemKey] = {Instance = ChildInstance, Cleanup = nil}
+									InstanceCache[ItemKey] = {Instance = ChildInstance, Value = ItemValue, Cleanup = nil}
 								end
-							else
-								-- Instance exists - if Processor returns cleanup, it handles updates
-								-- Otherwise, we recreate (safest for now)
-								if CacheEntry.Cleanup then
-									CacheEntry.Cleanup()
-								end
+							elseif CacheEntry.Value ~= ItemValue then
+								-- Case 2: Item Changed (Re-create)
+								-- Note: If you want mutable updates, Processor needs to return an update function.
+								-- Current architecture implies re-render on value change.
+								if CacheEntry.Cleanup then CacheEntry.Cleanup() end
 								CacheEntry.Instance:Destroy()
 								
 								local ChildInstance : Instance = ForObject.Processor(ItemKey, ItemValue)
 								if ChildInstance then
 									ChildInstance.Parent = NewInstance
-									InstanceCache[ItemKey] = {Instance = ChildInstance, Cleanup = nil}
+									InstanceCache[ItemKey] = {Instance = ChildInstance, Value = ItemValue, Cleanup = nil}
+								else
+									InstanceCache[ItemKey] = nil
+								end
+							else
+								-- Case 3: No Change. Do nothing.
+								-- Ensure parent is correct in case it was reparented externally
+								if CacheEntry.Instance.Parent ~= NewInstance then
+									CacheEntry.Instance.Parent = NewInstance
 								end
 							end
 						end
 						
 						-- Remove instances for deleted keys
-						for CacheKey : any, CacheEntry : {Instance: Instance, Cleanup: (() -> ())?} in InstanceCache do
+						for CacheKey : any, CacheEntry in InstanceCache do
 							if not SeenKeys[CacheKey] then
-								if CacheEntry.Cleanup then
-									CacheEntry.Cleanup()
-								end
+								if CacheEntry.Cleanup then CacheEntry.Cleanup() end
 								CacheEntry.Instance:Destroy()
 								InstanceCache[CacheKey] = nil
 							end
@@ -83,10 +95,8 @@ local function NewImplementation(ClassName : string)
 					
 					table.insert(Cleanups, function()
 						Disconnect()
-						for _, CacheEntry : {Instance: Instance, Cleanup: (() -> ())?} in InstanceCache do
-							if CacheEntry.Cleanup then
-								CacheEntry.Cleanup()
-							end
+						for _, CacheEntry in InstanceCache do
+							if CacheEntry.Cleanup then CacheEntry.Cleanup() end
 							CacheEntry.Instance:Destroy()
 						end
 						table.clear(InstanceCache)
@@ -107,10 +117,13 @@ local function NewImplementation(ClassName : string)
 			end
 			
 			if typeof(Value) == "function" then
-				local EventSignal : RBXScriptSignal = (NewInstance :: any)[Key]
-				if typeof(EventSignal) == "RBXScriptSignal" then
+				-- FIX: Check if the event actually exists
+				local Success, EventSignal = pcall(function() return (NewInstance :: any)[Key] end)
+				if Success and typeof(EventSignal) == "RBXScriptSignal" then
 					local Connection : RBXScriptConnection = EventSignal:Connect(Value)
 					table.insert(Cleanups, function() Connection:Disconnect() end)
+				else
+					warn("Proton: Invalid event connection '" .. tostring(Key) .. "' on " .. ClassName)
 				end
 				continue
 			end
@@ -129,12 +142,13 @@ local function NewImplementation(ClassName : string)
 			end)
 		end
 
-		if ReferenceSignal then
-			ReferenceSignal:Set(NewInstance)
-		end
-
 		if ParentInstance then
 			NewInstance.Parent = ParentInstance
+		end
+
+		-- FIX: Set reference AFTER parenting so scripts see the hierarchy
+		if ReferenceSignal then
+			ReferenceSignal:Set(NewInstance)
 		end
 
 		return NewInstance

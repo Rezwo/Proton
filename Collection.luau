@@ -23,10 +23,15 @@ function CollectionMetatable:Add(Data : { [string] : any }) : string
 
 	local ReactiveItem : { [string] : any } = {}
 	for Key : string, Value : any in Data do
-		ReactiveItem[Key] = State.CreateSignal(Value)
+		-- FIX: Prevent wrapping existing signals
+		if type(Value) == "table" and Value.Get and Value._IsSignal then
+			ReactiveItem[Key] = Value
+		else
+			ReactiveItem[Key] = State.CreateSignal(Value)
+		end
 	end
 
-	-- FIX: Create new table reference to trigger reactivity
+	-- Trigger reactivity by creating a new reference
 	local NewMap : { [string] : any } = table.clone(CurrentMap)
 	NewMap[NewId] = ReactiveItem
 	self.Signal:Set(NewMap)
@@ -37,18 +42,18 @@ end
 function CollectionMetatable:Remove(Id : string)
 	local CurrentMap : { [string] : any } = self.Signal:Get()
 	if not CurrentMap[Id] then
+		warn("Proton: Attempted to remove non-existent ID:", Id)
 		return
 	end
 
-	-- FIX: Clean up nested signals to prevent memory leak
+	-- Clean up nested signals to prevent memory leaks
 	local Item : { [string] : any } = CurrentMap[Id]
 	for _, Signal : any in Item do
-		if Signal.Destroy then
+		if type(Signal) == "table" and type(Signal.Destroy) == "function" then
 			Signal:Destroy()
 		end
 	end
 
-	-- Create new table reference to trigger reactivity
 	local NewMap : { [string] : any } = table.clone(CurrentMap)
 	NewMap[Id] = nil
 	self.Signal:Set(NewMap)
@@ -59,20 +64,26 @@ function CollectionMetatable:Patch(Id : string, Changes : { [string] : any })
 	local Item : { [string] : any } = CurrentMap[Id]
 
 	if not Item then
+		warn("Proton: Attempted to patch non-existent ID:", Id)
 		return
 	end
 
-	-- Update nested signals - they will trigger their own dependents
 	for Key : string, NewValue : any in Changes do
 		if Item[Key] then
+			-- If passing a new signal to patch, decide behavior. 
+			-- Standard behavior assumes Patch receives raw values.
 			Item[Key]:Set(NewValue)
 		else
-			Item[Key] = State.CreateSignal(NewValue)
+			-- New property added dynamically
+			if type(NewValue) == "table" and NewValue.Get and NewValue._IsSignal then
+				Item[Key] = NewValue
+			else
+				Item[Key] = State.CreateSignal(NewValue)
+			end
 		end
 	end
 	
-	-- FIX: Always trigger collection update for consistency
-	-- This ensures observers of the main collection signal get updates
+	-- Trigger collection update so lists observing the keys update
 	local NewMap : { [string] : any } = table.clone(CurrentMap)
 	self.Signal:Set(NewMap)
 end
@@ -80,10 +91,9 @@ end
 function CollectionMetatable:Destroy()
 	local CurrentMap : { [string] : any } = self.Signal:Get()
 	
-	-- Clean up all nested signals
 	for _, Item : any in CurrentMap do
 		for _, Signal : any in Item do
-			if Signal.Destroy then
+			if type(Signal) == "table" and type(Signal.Destroy) == "function" then
 				Signal:Destroy()
 			end
 		end
@@ -93,16 +103,8 @@ function CollectionMetatable:Destroy()
 end
 
 function CollectionMetatable:GetPage(PageNumber : number, ItemsPerPage : number) : { any }
-	-- FIX: Bounds checking to prevent invalid indices
-	if PageNumber < 1 then
-		warn("Proton: PageNumber must be >= 1, defaulting to 1")
-		PageNumber = 1
-	end
-	
-	if ItemsPerPage < 1 then
-		warn("Proton: ItemsPerPage must be >= 1, defaulting to 10")
-		ItemsPerPage = 10
-	end
+	if PageNumber < 1 then PageNumber = 1 end
+	if ItemsPerPage < 1 then ItemsPerPage = 10 end
 	
 	local CurrentMap : { [string] : any } = self.Signal:Get()
 	
@@ -111,6 +113,7 @@ function CollectionMetatable:GetPage(PageNumber : number, ItemsPerPage : number)
 		table.insert(SortedEntries, {Key = Key, Item = Item})
 	end
 	
+	-- Note: Sorting by GUID is arbitrary but consistent for pagination
 	table.sort(SortedEntries, function(a, b) : boolean
 		return a.Key < b.Key
 	end)
@@ -119,9 +122,8 @@ function CollectionMetatable:GetPage(PageNumber : number, ItemsPerPage : number)
 	local EndIndex : number = math.min(StartIndex + ItemsPerPage - 1, #SortedEntries)
 	local Page : { any } = {}
 	
-	-- Handle case where StartIndex exceeds array size
 	if StartIndex > #SortedEntries then
-		return Page  -- Return empty page
+		return Page
 	end
 	
 	for Index : number = StartIndex, EndIndex do
@@ -138,7 +140,11 @@ function Collection.CreateCollection<ItemType>(InitialData : { [string] : any }?
 		for Key : string, Value : any in InitialData do
 			local ReactiveItem : { [string] : any } = {}
 			for PropKey : string, PropValue : any in Value do
-				ReactiveItem[PropKey] = State.CreateSignal(PropValue)
+				if type(PropValue) == "table" and PropValue.Get and PropValue._IsSignal then
+					ReactiveItem[PropKey] = PropValue
+				else
+					ReactiveItem[PropKey] = State.CreateSignal(PropValue)
+				end
 			end
 			InitialMap[Key] = ReactiveItem
 		end
