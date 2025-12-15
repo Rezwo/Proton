@@ -13,8 +13,6 @@ function SignalMetatable:Get() : any
 end
 
 function SignalMetatable:Set(NewValue : any)
-	-- Note: Uses reference equality - won't detect table mutations
-	-- Users should replace tables entirely, not mutate them
 	if self.Value ~= NewValue then
 		self.Value = NewValue
 		Engine.Trigger(self)
@@ -49,8 +47,14 @@ end
 
 function State.CreateEffect(Callback : () -> Types.Destructor?, Priority : number?, Label : string?) : () -> ()
 	local EffectNode : Types.Dependency = Engine.CreateNode(Priority, Label)
+	local FailureCount : number = 0
+	local MaxFailures : number = 10
 
 	EffectNode.Rerun = function(self : Types.Dependency)
+		if FailureCount >= MaxFailures then
+			return
+		end
+
 		Engine.Cleanup(self)
 		Engine.PushEffect(self)
 		
@@ -59,11 +63,18 @@ function State.CreateEffect(Callback : () -> Types.Destructor?, Priority : numbe
 		Engine.PopEffect()
 		
 		if IsSuccess then
+			FailureCount = 0
 			if Result and type(Result) == "function" then
 				table.insert(self.Cleanups, Result)
 			end
 		else
-			warn("Proton: Effect error:", Result)
+			FailureCount += 1
+			warn(string.format("Proton: Effect error (%d/%d): %s", FailureCount, MaxFailures, tostring(Result)))
+			
+			if FailureCount >= MaxFailures then
+				warn("Proton: Effect disabled due to persistent errors")
+				Engine.Cleanup(self)
+			end
 		end
 	end
 
@@ -84,7 +95,6 @@ function State.CreateDerived<ValueType>(Processor : () -> ValueType) : Types.Rea
 	local Disconnect : () -> () = State.CreateEffect(function()
 		local IsSuccess : boolean, Result : any = pcall(Processor)
 		if IsSuccess then
-			-- Note: Uses reference equality - same limitation as Set()
 			if InternalSignal.Value ~= Result then
 				InternalSignal.Value = Result
 				Engine.Trigger(InternalSignal)

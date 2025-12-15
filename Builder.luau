@@ -7,25 +7,25 @@ local Builder = {}
 local function ApplyProperty(Instance : Instance, Key : string, Value : any, Cleanups : { () -> () })
 	if type(Value) == "table" and type(Value.Get) == "function" then
 		local ReactiveValue : Types.ReadOnly<any> = Value
-		local HasWarned = false -- FIX: Issue 51 - Prevent warning spam
+		local HasWarned : boolean = false
 		
 		local Disconnect : () -> () = State.CreateEffect(function()
-			local Success, Err = pcall(function()
+			local Success : boolean, ErrorObject : any = pcall(function()
 				(Instance :: any)[Key] = ReactiveValue:Get()
 			end)
 			if not Success and not HasWarned then
 				HasWarned = true
-				warn("Proton: Failed to bind property '" .. Key .. "' on " .. Instance.ClassName .. ": " .. tostring(Err))
+				warn("Proton: Failed to bind property '" .. Key .. "' on " .. Instance.ClassName .. ": " .. tostring(ErrorObject))
 			end
 			return nil
 		end)
 		table.insert(Cleanups, Disconnect)
 	else
-		local Success, Err = pcall(function()
+		local Success : boolean, ErrorObject : any = pcall(function()
 			(Instance :: any)[Key] = Value
 		end)
 		if not Success then
-			warn("Proton: Failed to set property '" .. Key .. "' on " .. Instance.ClassName .. ": " .. tostring(Err))
+			warn("Proton: Failed to set property '" .. Key .. "' on " .. Instance.ClassName .. ": " .. tostring(ErrorObject))
 		end
 	end
 end
@@ -45,7 +45,6 @@ local function NewImplementation(ClassName : string)
 				end
 				
 				if type(Value) == "table" and Value.Type == "For" then
-					-- FIX: Issue 59 - Validate For object structure
 					if not Value.Source or not Value.Processor then
 						error("Proton: Invalid For object - missing Source or Processor")
 					end
@@ -55,7 +54,7 @@ local function NewImplementation(ClassName : string)
 						Instance: Instance, 
 						Value: any, 
 						Cleanup: (() -> ())?,
-						DestroyConn: RBXScriptConnection?
+						DestroyConnection: RBXScriptConnection?
 					} } = {}
 					
 					local Disconnect : () -> () = State.CreateEffect(function()
@@ -71,9 +70,7 @@ local function NewImplementation(ClassName : string)
 								if ChildInstance then
 									ChildInstance.Parent = NewInstance
 									
-									local DestroyConn = ChildInstance.Destroying:Connect(function()
-										-- FIX: Issue 48 - NOTE: If destroyed externally, it WILL be recreated 
-										-- on next update if data persists. This is intentional reactive behavior.
+									local DestroyConnection : RBXScriptConnection = ChildInstance.Destroying:Connect(function()
 										InstanceCache[ItemKey] = nil
 									end)
 									
@@ -81,19 +78,18 @@ local function NewImplementation(ClassName : string)
 										Instance = ChildInstance, 
 										Value = ItemValue, 
 										Cleanup = nil,
-										DestroyConn = DestroyConn
+										DestroyConnection = DestroyConnection
 									}
 								end
 							elseif CacheEntry.Value ~= ItemValue then
-								-- Update needed
 								if CacheEntry.Cleanup then CacheEntry.Cleanup() end
-								if CacheEntry.DestroyConn then CacheEntry.DestroyConn:Disconnect() end
+								if CacheEntry.DestroyConnection then CacheEntry.DestroyConnection:Disconnect() end
 								CacheEntry.Instance:Destroy()
 								
 								local ChildInstance : Instance = ForObject.Processor(ItemKey, ItemValue)
 								if ChildInstance then
 									ChildInstance.Parent = NewInstance
-									local DestroyConn = ChildInstance.Destroying:Connect(function()
+									local DestroyConnection : RBXScriptConnection = ChildInstance.Destroying:Connect(function()
 										InstanceCache[ItemKey] = nil
 									end)
 									
@@ -101,13 +97,13 @@ local function NewImplementation(ClassName : string)
 										Instance = ChildInstance, 
 										Value = ItemValue, 
 										Cleanup = nil,
-										DestroyConn = DestroyConn
+										DestroyConnection = DestroyConnection
 									}
 								else
 									InstanceCache[ItemKey] = nil
 								end
 							else
-								local Success = pcall(function()
+								local Success : boolean = pcall(function()
 									if CacheEntry.Instance.Parent ~= NewInstance then
 										CacheEntry.Instance.Parent = NewInstance
 									end
@@ -121,7 +117,7 @@ local function NewImplementation(ClassName : string)
 						for CacheKey : any, CacheEntry in InstanceCache do
 							if not SeenKeys[CacheKey] then
 								if CacheEntry.Cleanup then CacheEntry.Cleanup() end
-								if CacheEntry.DestroyConn then CacheEntry.DestroyConn:Disconnect() end
+								if CacheEntry.DestroyConnection then CacheEntry.DestroyConnection:Disconnect() end
 								CacheEntry.Instance:Destroy()
 								InstanceCache[CacheKey] = nil
 							end
@@ -133,9 +129,7 @@ local function NewImplementation(ClassName : string)
 						Disconnect()
 						for _, CacheEntry in InstanceCache do
 							if CacheEntry.Cleanup then CacheEntry.Cleanup() end
-							-- FIX: Issue 55 - Correct cleanup order
-							-- FIX: Issue 47 - Ensure Disconnect is called
-							if CacheEntry.DestroyConn then CacheEntry.DestroyConn:Disconnect() end
+							if CacheEntry.DestroyConnection then CacheEntry.DestroyConnection:Disconnect() end
 							CacheEntry.Instance:Destroy()
 						end
 						table.clear(InstanceCache)
@@ -156,7 +150,7 @@ local function NewImplementation(ClassName : string)
 			end
 			
 			if typeof(Value) == "function" then
-				local Success, EventSignal = pcall(function() return (NewInstance :: any)[Key] end)
+				local Success : boolean, EventSignal : any = pcall(function() return (NewInstance :: any)[Key] end)
 				if Success and typeof(EventSignal) == "RBXScriptSignal" then
 					local Connection : RBXScriptConnection = EventSignal:Connect(Value)
 					table.insert(Cleanups, function() Connection:Disconnect() end)

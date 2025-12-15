@@ -8,8 +8,8 @@ local Collection = {}
 export type Collection<ItemType> = {
 	Signal : Types.Signal<{ [string] : ItemType }>,
 	Add : (self : Collection<ItemType>, Data : { [string] : any }) -> string,
-	Remove : (self : Collection<ItemType>, Id : string) -> (),
-	Patch : (self : Collection<ItemType>, Id : string, Changes : { [string] : any }) -> (),
+	Remove : (self : Collection<ItemType>, Identifier : string) -> (),
+	Patch : (self : Collection<ItemType>, Identifier : string, Changes : { [string] : any }) -> (),
 	Destroy : (self : Collection<ItemType>) -> (),
 	GetPage : (self : Collection<ItemType>, PageNumber : number, ItemsPerPage : number) -> { ItemType }
 }
@@ -18,9 +18,7 @@ local CollectionMetatable = {}
 CollectionMetatable.__index = CollectionMetatable
 
 function CollectionMetatable:Add(Data : { [string] : any }) : string
-	-- WARNING: (Issue 49) Not thread-safe! Multiple rapid operations in the same frame
-	-- can cause race conditions. Wrap in Batch() for atomic operations if needed.
-	local NewId : string = HttpService:GenerateGUID(false)
+	local NewIdentifier : string = HttpService:GenerateGUID(false)
 	local CurrentMap : { [string] : any } = self.Signal:Get()
 
 	local ReactiveItem : { [string] : any } = {}
@@ -33,20 +31,20 @@ function CollectionMetatable:Add(Data : { [string] : any }) : string
 	end
 
 	local NewMap : { [string] : any } = table.clone(CurrentMap)
-	NewMap[NewId] = ReactiveItem
+	NewMap[NewIdentifier] = ReactiveItem
 	self.Signal:Set(NewMap)
 	
-	return NewId
+	return NewIdentifier
 end
 
-function CollectionMetatable:Remove(Id : string)
+function CollectionMetatable:Remove(Identifier : string)
 	local CurrentMap : { [string] : any } = self.Signal:Get()
-	if not CurrentMap[Id] then
-		warn("Proton: Attempted to remove non-existent ID:", Id)
+	if not CurrentMap[Identifier] then
+		warn("Proton: Attempted to remove non-existent Identifier:", Identifier)
 		return
 	end
 
-	local Item : { [string] : any } = CurrentMap[Id]
+	local Item : { [string] : any } = CurrentMap[Identifier]
 	for _, Signal : any in Item do
 		if type(Signal) == "table" and type(Signal.Destroy) == "function" then
 			Signal:Destroy()
@@ -54,16 +52,16 @@ function CollectionMetatable:Remove(Id : string)
 	end
 
 	local NewMap : { [string] : any } = table.clone(CurrentMap)
-	NewMap[Id] = nil
+	NewMap[Identifier] = nil
 	self.Signal:Set(NewMap)
 end
 
-function CollectionMetatable:Patch(Id : string, Changes : { [string] : any })
+function CollectionMetatable:Patch(Identifier : string, Changes : { [string] : any })
 	local CurrentMap : { [string] : any } = self.Signal:Get()
-	local Item : { [string] : any } = CurrentMap[Id]
+	local Item : { [string] : any } = CurrentMap[Identifier]
 
 	if not Item then
-		warn("Proton: Attempted to patch non-existent ID:", Id)
+		warn("Proton: Attempted to patch non-existent Identifier:", Identifier)
 		return
 	end
 
@@ -78,11 +76,6 @@ function CollectionMetatable:Patch(Id : string, Changes : { [string] : any })
 		elseif Item[Key] then
 			Item[Key]:Set(NewValue)
 		else
-			-- FIX: Issue 57 - Check if we are overwriting an existing key that was maybe removed
-			if Item[Key] and type(Item[Key]) == "table" and type(Item[Key].Destroy) == "function" then
-				Item[Key]:Destroy()
-			end
-
 			if type(NewValue) == "table" and type(NewValue.Get) == "function" and NewValue._IsSignal then
 				Item[Key] = NewValue
 			else
@@ -110,8 +103,6 @@ function CollectionMetatable:Destroy()
 end
 
 function CollectionMetatable:GetPage(PageNumber : number, ItemsPerPage : number) : { any }
-	-- NOTE: (Issue 53) Returns array of reactive items (tables of signals). 
-	-- Consumer must call :Get() on properties. This is by design for performance.
 	if PageNumber < 1 then PageNumber = 1 end
 	if ItemsPerPage < 1 then ItemsPerPage = 10 end
 	
@@ -122,8 +113,8 @@ function CollectionMetatable:GetPage(PageNumber : number, ItemsPerPage : number)
 		table.insert(SortedEntries, {Key = Key, Item = Item})
 	end
 	
-	table.sort(SortedEntries, function(a, b) : boolean
-		return a.Key < b.Key
+	table.sort(SortedEntries, function(ItemA, ItemB) : boolean
+		return ItemA.Key < ItemB.Key
 	end)
 	
 	local StartIndex : number = ((PageNumber - 1) * ItemsPerPage) + 1
@@ -141,7 +132,6 @@ function CollectionMetatable:GetPage(PageNumber : number, ItemsPerPage : number)
 	return Page
 end
 
--- ... [CreateCollection remains same as previous fix] ...
 function Collection.CreateCollection<ItemType>(InitialData : { [string] : any }?) : Collection<ItemType>
 	local InitialMap : { [string] : any } = {}
 

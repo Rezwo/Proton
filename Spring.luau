@@ -31,7 +31,6 @@ function SpringObjectMetatable:SetPosition(Value : number)
 	end
 end
 
--- ... [SetVelocity, Impulse, Pause, Resume, Destroy same as previous] ...
 function SpringObjectMetatable:SetVelocity(Velocity : number)
 	local Data : SpringData? = self._Data
 	if Data then
@@ -69,7 +68,6 @@ function SpringObjectMetatable:Destroy()
 	end
 end
 
-
 local ActiveSprings : { [any] : SpringData } = setmetatable({}, {__mode = "k"})
 local HeartbeatConnection : RBXScriptConnection? = nil
 
@@ -98,18 +96,14 @@ local function UpdateSprings(DeltaTime : number)
 		local NewVelocity : number = (Data.Velocity + Force * DeltaTime) * Data.Damping
 		local NewValue : number = Data.CurrentValue + NewVelocity * DeltaTime
 		
-		-- FIX: Issue 50 - Symmetric Epsilon Calculation
-		-- Bases tolerance on the larger of Goal or Current to ensure convergence at 0
-		local Scale = math.max(math.abs(Goal), math.abs(Data.CurrentValue))
-		local Epsilon = math.clamp(Scale * 0.001, 0.001, 0.01)
+		local Scale : number = math.max(math.abs(Goal), math.abs(Data.CurrentValue))
+		local Epsilon : number = math.clamp(Scale * 0.001, 0.001, 0.01)
 		
 		if math.abs(Goal - NewValue) < Epsilon and math.abs(NewVelocity) < Epsilon then
 			NewValue = Goal
 			NewVelocity = 0
 		end
 		
-		-- FIX: Issue 54 - Removed redundant check
-		-- We only reach here if not converged or if just converged to goal
 		Data.Velocity = NewVelocity
 		Data.CurrentValue = NewValue
 		Data.InternalSignal:Set(NewValue)

@@ -5,7 +5,7 @@ type Dependency = Types.Dependency
 
 local Engine = {}
 local EffectStack : { Dependency } = {}
-local EffectStackSet : { [Dependency] : boolean } = {} -- FIX: Issue 52 - O(1) lookup
+local EffectStackSet : { [Dependency] : boolean } = {}
 local MaxStackDepth : number = 100
 local IsBatching : boolean = false
 local BatchQueue : { [Dependency] : boolean } = {}
@@ -17,11 +17,11 @@ function Engine.Cleanup(Node : Dependency)
 	table.clear(CleanupList)
 	
 	for Index : number = #CleanupSnapshot, 1, -1 do
-		local Success : boolean, Error : any = pcall(CleanupSnapshot[Index])
+		local Success : boolean, ErrorObject : any = pcall(CleanupSnapshot[Index])
 		if not Success then
 			warn(string.format("Proton: Cleanup error%s: %s", 
 				Node.DebugLabel and " (" .. Node.DebugLabel .. ")" or "",
-				tostring(Error)))
+				tostring(ErrorObject)))
 		end
 	end
 
@@ -31,9 +31,8 @@ function Engine.Cleanup(Node : Dependency)
 	table.clear(Node.Dependencies)
 	
 	if Node.IsActive then
-		-- FIX: Issue 58 - Underflow detection
 		if NodeCount <= 0 then
-			warn("Proton: NodeCount underflow detected (double cleanup?)")
+			warn("Proton: NodeCount underflow detected")
 		end
 		NodeCount = math.max(0, NodeCount - 1)
 		Node.IsActive = false
@@ -50,7 +49,6 @@ end
 
 function Engine.Trigger(SignalNode : { Dependents : { [Dependency] : boolean } })
 	for Dependent : Dependency, _ : boolean in SignalNode.Dependents do
-		-- FIX: Issue 52 - O(1) Cycle Detection
 		if EffectStackSet[Dependent] then
 			warn(string.format("Proton: Circular dependency detected in %s. Skipping trigger.", 
 				Dependent.DebugLabel or "unnamed effect"))
@@ -67,13 +65,16 @@ end
 
 function Engine.PushEffect(Effect : Dependency)
 	if #EffectStack >= MaxStackDepth then
-		error("Proton: Maximum effect depth exceeded (possible circular dependency)")
+		error("Proton: Maximum effect depth exceeded")
 	end
 	table.insert(EffectStack, Effect)
 	EffectStackSet[Effect] = true
 end
 
 function Engine.PopEffect()
+	if #EffectStack == 0 then
+		error("Proton: Attempted to pop from empty effect stack")
+	end
 	local Effect = table.remove(EffectStack)
 	if Effect then
 		EffectStackSet[Effect] = nil
@@ -87,10 +88,10 @@ function Engine.Batch(Callback : () -> ())
 	end
 
 	IsBatching = true
-	local IsSuccess : boolean, Error : any = xpcall(Callback, debug.traceback)
+	local IsSuccess : boolean, ErrorObject : any = xpcall(Callback, debug.traceback)
 	
 	if not IsSuccess then
-		warn("Proton: Batch callback error:", Error)
+		warn("Proton: Batch callback error:", ErrorObject)
 	end
 
 	local Snapshot : { Dependency } = {}
