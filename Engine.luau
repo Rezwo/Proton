@@ -5,22 +5,23 @@ type Dependency = Types.Dependency
 
 local Engine = {}
 local EffectStack : { Dependency } = {}
+local EffectStackSet : { [Dependency] : boolean } = {} -- FIX: Issue 52 - O(1) lookup
 local MaxStackDepth : number = 100
 local IsBatching : boolean = false
 local BatchQueue : { [Dependency] : boolean } = {}
 local NodeCount : number = 0
 
 function Engine.Cleanup(Node : Dependency)
-	-- FIX: Issue 35 - Create actual snapshot to prevent modification during iteration
 	local CleanupList : { () -> () } = Node.Cleanups
 	local CleanupSnapshot = table.clone(CleanupList)
 	table.clear(CleanupList)
 	
-	-- Iterate backwards to respect LIFO order of cleanup
 	for Index : number = #CleanupSnapshot, 1, -1 do
 		local Success : boolean, Error : any = pcall(CleanupSnapshot[Index])
 		if not Success then
-			warn("Proton: Cleanup error:", Error)
+			warn(string.format("Proton: Cleanup error%s: %s", 
+				Node.DebugLabel and " (" .. Node.DebugLabel .. ")" or "",
+				tostring(Error)))
 		end
 	end
 
@@ -30,6 +31,10 @@ function Engine.Cleanup(Node : Dependency)
 	table.clear(Node.Dependencies)
 	
 	if Node.IsActive then
+		-- FIX: Issue 58 - Underflow detection
+		if NodeCount <= 0 then
+			warn("Proton: NodeCount underflow detected (double cleanup?)")
+		end
 		NodeCount = math.max(0, NodeCount - 1)
 		Node.IsActive = false
 	end
@@ -45,17 +50,10 @@ end
 
 function Engine.Trigger(SignalNode : { Dependents : { [Dependency] : boolean } })
 	for Dependent : Dependency, _ : boolean in SignalNode.Dependents do
-		-- FIX: Issue 34 - Deep Cycle Detection
-		local IsCycle = false
-		for _, ActiveEffect in EffectStack do
-			if ActiveEffect == Dependent then
-				IsCycle = true
-				break
-			end
-		end
-
-		if IsCycle then
-			warn("Proton: Circular dependency detected. Signal triggered inside its own dependency chain.")
+		-- FIX: Issue 52 - O(1) Cycle Detection
+		if EffectStackSet[Dependent] then
+			warn(string.format("Proton: Circular dependency detected in %s. Skipping trigger.", 
+				Dependent.DebugLabel or "unnamed effect"))
 			continue
 		end
 
@@ -72,10 +70,14 @@ function Engine.PushEffect(Effect : Dependency)
 		error("Proton: Maximum effect depth exceeded (possible circular dependency)")
 	end
 	table.insert(EffectStack, Effect)
+	EffectStackSet[Effect] = true
 end
 
 function Engine.PopEffect()
-	table.remove(EffectStack)
+	local Effect = table.remove(EffectStack)
+	if Effect then
+		EffectStackSet[Effect] = nil
+	end
 end
 
 function Engine.Batch(Callback : () -> ())
@@ -88,7 +90,6 @@ function Engine.Batch(Callback : () -> ())
 	local IsSuccess : boolean, Error : any = xpcall(Callback, debug.traceback)
 	
 	if not IsSuccess then
-		-- FIX: Issue 43 - Warn loudly but process queue to attempt consistency
 		warn("Proton: Batch callback error:", Error)
 	end
 

@@ -31,6 +31,7 @@ function SpringObjectMetatable:SetPosition(Value : number)
 	end
 end
 
+-- ... [SetVelocity, Impulse, Pause, Resume, Destroy same as previous] ...
 function SpringObjectMetatable:SetVelocity(Velocity : number)
 	local Data : SpringData? = self._Data
 	if Data then
@@ -68,6 +69,7 @@ function SpringObjectMetatable:Destroy()
 	end
 end
 
+
 local ActiveSprings : { [any] : SpringData } = setmetatable({}, {__mode = "k"})
 local HeartbeatConnection : RBXScriptConnection? = nil
 
@@ -86,7 +88,6 @@ local function UpdateSprings(DeltaTime : number)
 		end)
 		
 		if not Success then
-			-- FIX: Issue 39 - Warn before disabling
 			warn("Proton: Spring target error (spring disabled):", Goal)
 			ActiveSprings[SpringObject] = nil
 			continue
@@ -97,21 +98,21 @@ local function UpdateSprings(DeltaTime : number)
 		local NewVelocity : number = (Data.Velocity + Force * DeltaTime) * Data.Damping
 		local NewValue : number = Data.CurrentValue + NewVelocity * DeltaTime
 		
-		-- FIX: Issue 38 - Better Epsilon calculation for edge cases
-		-- Clamps epsilon between 0.001 and 0.01 based on goal magnitude
-		local Epsilon = math.clamp(math.abs(Goal * 0.001), 0.001, 0.01)
+		-- FIX: Issue 50 - Symmetric Epsilon Calculation
+		-- Bases tolerance on the larger of Goal or Current to ensure convergence at 0
+		local Scale = math.max(math.abs(Goal), math.abs(Data.CurrentValue))
+		local Epsilon = math.clamp(Scale * 0.001, 0.001, 0.01)
 		
 		if math.abs(Goal - NewValue) < Epsilon and math.abs(NewVelocity) < Epsilon then
 			NewValue = Goal
 			NewVelocity = 0
 		end
 		
-		-- FIX: Issue 44 - Removed redundant comparison logic
-		if NewValue ~= Data.CurrentValue or Data.Velocity ~= NewVelocity then
-			Data.Velocity = NewVelocity
-			Data.CurrentValue = NewValue
-			Data.InternalSignal:Set(NewValue)
-		end
+		-- FIX: Issue 54 - Removed redundant check
+		-- We only reach here if not converged or if just converged to goal
+		Data.Velocity = NewVelocity
+		Data.CurrentValue = NewValue
+		Data.InternalSignal:Set(NewValue)
 	end
 	
 	if Count == 0 and HeartbeatConnection then

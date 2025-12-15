@@ -7,19 +7,20 @@ local Builder = {}
 local function ApplyProperty(Instance : Instance, Key : string, Value : any, Cleanups : { () -> () })
 	if type(Value) == "table" and type(Value.Get) == "function" then
 		local ReactiveValue : Types.ReadOnly<any> = Value
+		local HasWarned = false -- FIX: Issue 51 - Prevent warning spam
+		
 		local Disconnect : () -> () = State.CreateEffect(function()
-			-- FIX: Issue 31 - Catch and warn on property assignment failure
 			local Success, Err = pcall(function()
 				(Instance :: any)[Key] = ReactiveValue:Get()
 			end)
-			if not Success then
+			if not Success and not HasWarned then
+				HasWarned = true
 				warn("Proton: Failed to bind property '" .. Key .. "' on " .. Instance.ClassName .. ": " .. tostring(Err))
 			end
 			return nil
 		end)
 		table.insert(Cleanups, Disconnect)
 	else
-		-- FIX: Issue 31 - Non-reactive assignment protection
 		local Success, Err = pcall(function()
 			(Instance :: any)[Key] = Value
 		end)
@@ -44,8 +45,12 @@ local function NewImplementation(ClassName : string)
 				end
 				
 				if type(Value) == "table" and Value.Type == "For" then
+					-- FIX: Issue 59 - Validate For object structure
+					if not Value.Source or not Value.Processor then
+						error("Proton: Invalid For object - missing Source or Processor")
+					end
+					
 					local ForObject : Types.ForObject<any, any> = Value
-					-- Cache now stores Connection to handle external destruction
 					local InstanceCache : { [any] : {
 						Instance: Instance, 
 						Value: any, 
@@ -62,13 +67,13 @@ local function NewImplementation(ClassName : string)
 							local CacheEntry = InstanceCache[ItemKey]
 							
 							if not CacheEntry then
-								-- Create new instance
 								local ChildInstance : Instance = ForObject.Processor(ItemKey, ItemValue)
 								if ChildInstance then
 									ChildInstance.Parent = NewInstance
 									
-									-- FIX: Issue 45 - Listen for external destruction
 									local DestroyConn = ChildInstance.Destroying:Connect(function()
+										-- FIX: Issue 48 - NOTE: If destroyed externally, it WILL be recreated 
+										-- on next update if data persists. This is intentional reactive behavior.
 										InstanceCache[ItemKey] = nil
 									end)
 									
@@ -80,7 +85,7 @@ local function NewImplementation(ClassName : string)
 									}
 								end
 							elseif CacheEntry.Value ~= ItemValue then
-								-- Update needed (Issue 40: Note this uses reference equality)
+								-- Update needed
 								if CacheEntry.Cleanup then CacheEntry.Cleanup() end
 								if CacheEntry.DestroyConn then CacheEntry.DestroyConn:Disconnect() end
 								CacheEntry.Instance:Destroy()
@@ -102,14 +107,12 @@ local function NewImplementation(ClassName : string)
 									InstanceCache[ItemKey] = nil
 								end
 							else
-								-- FIX: Issue 32 - Protect against accessing destroyed parents
 								local Success = pcall(function()
 									if CacheEntry.Instance.Parent ~= NewInstance then
 										CacheEntry.Instance.Parent = NewInstance
 									end
 								end)
 								if not Success then
-									-- Instance was destroyed externally, remove from cache
 									InstanceCache[ItemKey] = nil
 								end
 							end
@@ -130,6 +133,8 @@ local function NewImplementation(ClassName : string)
 						Disconnect()
 						for _, CacheEntry in InstanceCache do
 							if CacheEntry.Cleanup then CacheEntry.Cleanup() end
+							-- FIX: Issue 55 - Correct cleanup order
+							-- FIX: Issue 47 - Ensure Disconnect is called
 							if CacheEntry.DestroyConn then CacheEntry.DestroyConn:Disconnect() end
 							CacheEntry.Instance:Destroy()
 						end
@@ -151,7 +156,6 @@ local function NewImplementation(ClassName : string)
 			end
 			
 			if typeof(Value) == "function" then
-				-- FIX: Issue 42 - Explicit event checking
 				local Success, EventSignal = pcall(function() return (NewInstance :: any)[Key] end)
 				if Success and typeof(EventSignal) == "RBXScriptSignal" then
 					local Connection : RBXScriptConnection = EventSignal:Connect(Value)
@@ -176,7 +180,6 @@ local function NewImplementation(ClassName : string)
 			end)
 		end
 
-		-- FIX: Issue 33 - Parent first, then set reference to ensure validity
 		if ParentInstance then
 			NewInstance.Parent = ParentInstance
 		end

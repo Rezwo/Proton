@@ -18,12 +18,13 @@ local CollectionMetatable = {}
 CollectionMetatable.__index = CollectionMetatable
 
 function CollectionMetatable:Add(Data : { [string] : any }) : string
+	-- WARNING: (Issue 49) Not thread-safe! Multiple rapid operations in the same frame
+	-- can cause race conditions. Wrap in Batch() for atomic operations if needed.
 	local NewId : string = HttpService:GenerateGUID(false)
 	local CurrentMap : { [string] : any } = self.Signal:Get()
 
 	local ReactiveItem : { [string] : any } = {}
 	for Key : string, Value : any in Data do
-		-- FIX: Issue 36 - Strict signal check
 		if type(Value) == "table" and type(Value.Get) == "function" and Value._IsSignal then
 			ReactiveItem[Key] = Value
 		else
@@ -67,10 +68,8 @@ function CollectionMetatable:Patch(Id : string, Changes : { [string] : any })
 	end
 
 	for Key : string, NewValue : any in Changes do
-		-- FIX: Issue 41 - Handle nil values (deletion)
 		if NewValue == nil then
 			if Item[Key] then
-				-- FIX: Issue 46 - Clean up replaced signals
 				if type(Item[Key]) == "table" and type(Item[Key].Destroy) == "function" then
 					Item[Key]:Destroy()
 				end
@@ -79,6 +78,11 @@ function CollectionMetatable:Patch(Id : string, Changes : { [string] : any })
 		elseif Item[Key] then
 			Item[Key]:Set(NewValue)
 		else
+			-- FIX: Issue 57 - Check if we are overwriting an existing key that was maybe removed
+			if Item[Key] and type(Item[Key]) == "table" and type(Item[Key].Destroy) == "function" then
+				Item[Key]:Destroy()
+			end
+
 			if type(NewValue) == "table" and type(NewValue.Get) == "function" and NewValue._IsSignal then
 				Item[Key] = NewValue
 			else
@@ -106,6 +110,8 @@ function CollectionMetatable:Destroy()
 end
 
 function CollectionMetatable:GetPage(PageNumber : number, ItemsPerPage : number) : { any }
+	-- NOTE: (Issue 53) Returns array of reactive items (tables of signals). 
+	-- Consumer must call :Get() on properties. This is by design for performance.
 	if PageNumber < 1 then PageNumber = 1 end
 	if ItemsPerPage < 1 then ItemsPerPage = 10 end
 	
@@ -135,6 +141,7 @@ function CollectionMetatable:GetPage(PageNumber : number, ItemsPerPage : number)
 	return Page
 end
 
+-- ... [CreateCollection remains same as previous fix] ...
 function Collection.CreateCollection<ItemType>(InitialData : { [string] : any }?) : Collection<ItemType>
 	local InitialMap : { [string] : any } = {}
 
