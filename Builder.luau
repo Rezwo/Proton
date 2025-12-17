@@ -66,6 +66,7 @@ local function NewImplementation(ClassName : string)
 							local CacheEntry = InstanceCache[ItemKey]
 							
 							if not CacheEntry then
+								-- Create new instance
 								local ChildInstance : Instance = ForObject.Processor(ItemKey, ItemValue)
 								if ChildInstance then
 									ChildInstance.Parent = NewInstance
@@ -82,6 +83,8 @@ local function NewImplementation(ClassName : string)
 									}
 								end
 							elseif CacheEntry.Value ~= ItemValue then
+								-- Value changed - destroy and recreate
+								-- TODO: Consider adding update-in-place optimization
 								if CacheEntry.Cleanup then CacheEntry.Cleanup() end
 								if CacheEntry.DestroyConnection then CacheEntry.DestroyConnection:Disconnect() end
 								CacheEntry.Instance:Destroy()
@@ -103,6 +106,7 @@ local function NewImplementation(ClassName : string)
 									InstanceCache[ItemKey] = nil
 								end
 							else
+								-- Value unchanged - ensure parent is correct
 								local Success : boolean = pcall(function()
 									if CacheEntry.Instance.Parent ~= NewInstance then
 										CacheEntry.Instance.Parent = NewInstance
@@ -114,6 +118,7 @@ local function NewImplementation(ClassName : string)
 							end
 						end
 						
+						-- Remove items no longer in data
 						for CacheKey : any, CacheEntry in InstanceCache do
 							if not SeenKeys[CacheKey] then
 								if CacheEntry.Cleanup then CacheEntry.Cleanup() end
@@ -163,8 +168,11 @@ local function NewImplementation(ClassName : string)
 			ApplyProperty(NewInstance, Key, Value, Cleanups)
 		end
 
+		-- FIX: Store the Destroying connection for proper tracking
+		-- While Roblox will clean this up when the instance is destroyed,
+		-- storing it allows for debugging and explicit cleanup if needed
 		if #Cleanups > 0 or ReferenceSignal then
-			NewInstance.Destroying:Connect(function()
+			local DestroyConnection : RBXScriptConnection = NewInstance.Destroying:Connect(function()
 				for _, Cleanup : () -> () in Cleanups do
 					Cleanup()
 				end
@@ -172,6 +180,11 @@ local function NewImplementation(ClassName : string)
 					ReferenceSignal:Set(nil)
 				end
 			end)
+			
+			-- Store connection on instance for tracking (not strictly necessary but good practice)
+			-- This allows external code to check if cleanups are registered
+			-- Note: The connection is automatically cleaned up when instance is GC'd
+			(NewInstance :: any)._ProtonCleanupConnection = DestroyConnection
 		end
 
 		if ParentInstance then

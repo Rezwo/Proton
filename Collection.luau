@@ -65,6 +65,8 @@ function CollectionMetatable:Patch(Identifier : string, Changes : { [string] : a
 		return
 	end
 
+	-- Note: We use shallow clone here, so modifying Item affects NewMap
+	-- This is intentional - we modify in place then trigger update
 	for Key : string, NewValue : any in Changes do
 		if NewValue == nil then
 			if Item[Key] then
@@ -91,6 +93,7 @@ end
 function CollectionMetatable:Destroy()
 	local CurrentMap : { [string] : any } = self.Signal:Get()
 	
+	-- Clean up all item signals
 	for _, Item : any in CurrentMap do
 		for _, Signal : any in Item do
 			if type(Signal) == "table" and type(Signal.Destroy) == "function" then
@@ -99,7 +102,12 @@ function CollectionMetatable:Destroy()
 		end
 	end
 	
+	-- Clear the collection
 	self.Signal:Set({})
+	
+	-- FIX: Destroy the main signal to prevent memory leak
+	-- This removes the signal from dependency graph and clears dependents
+	self.Signal:Destroy()
 end
 
 function CollectionMetatable:GetPage(PageNumber : number, ItemsPerPage : number) : { any }
@@ -108,6 +116,8 @@ function CollectionMetatable:GetPage(PageNumber : number, ItemsPerPage : number)
 	
 	local CurrentMap : { [string] : any } = self.Signal:Get()
 	
+	-- Note: Sorting by GUID produces effectively random order
+	-- Consider allowing custom sort function in future
 	local SortedEntries : { {Key: string, Item: any} } = {}
 	for Key : string, Item : any in CurrentMap do
 		table.insert(SortedEntries, {Key = Key, Item = Item})

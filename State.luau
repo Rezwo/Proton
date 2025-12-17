@@ -89,9 +89,20 @@ function State.CreateDerived<ValueType>(Processor : () -> ValueType) : Types.Rea
 	local InternalSignal : any = {
 		Value = nil,
 		Dependents = {},
-		_IsSignal = true
+		_IsSignal = true,
+		_IsDerived = true
 	}
 	
+	-- FIX: Compute initial value synchronously
+	-- This prevents returning a signal with nil value that only gets populated later
+	local IsSuccess : boolean, InitialResult : any = pcall(Processor)
+	if IsSuccess then
+		InternalSignal.Value = InitialResult
+	else
+		warn("Proton: Derived initial value error:", InitialResult)
+	end
+	
+	-- Create effect to track dependencies and update value
 	local Disconnect : () -> () = State.CreateEffect(function()
 		local IsSuccess : boolean, Result : any = pcall(Processor)
 		if IsSuccess then
@@ -105,8 +116,18 @@ function State.CreateDerived<ValueType>(Processor : () -> ValueType) : Types.Rea
 		return nil
 	end)
 
+	-- FIX: Store disconnect function for proper cleanup
+	-- This ensures the effect can be cleaned up when signal is destroyed
+	InternalSignal._Disconnect = Disconnect
+
 	InternalSignal.Destroy = function()
-		Disconnect()
+		-- Clean up the internal effect
+		if InternalSignal._Disconnect then
+			InternalSignal._Disconnect()
+			InternalSignal._Disconnect = nil
+		end
+		
+		-- Clear dependents and value
 		table.clear(InternalSignal.Dependents)
 		InternalSignal.Value = nil
 	end
